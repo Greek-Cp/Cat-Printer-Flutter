@@ -460,20 +460,26 @@ class CatPrinterService {
   }
 
   /// Print image - menggunakan pendekatan blog untuk hasil lebih baik
-  Future<void> printImage(img.Image image, {double? threshold, int? energy, String ditherType = 'threshold', double widthScale = 0.6, double heightScale = 0.5}) async {
+  Future<void> printImage(img.Image image,
+      {double? threshold,
+      int? energy,
+      String ditherType = 'threshold',
+      double widthScale = 0.6,
+      double heightScale = 0.5}) async {
     if (!_isConnected || _model == null) {
       throw Exception('Printer not connected');
     }
-       
+
     // Resize image using configurable scale factors
     int targetWidth = (_model!.paperWidth * widthScale).round();
     img.Image processedImage;
-    
+
     if (image.width > targetWidth) {
       // Calculate height with configurable reduction factor
-      int proportionalHeight = (image.height * targetWidth / image.width).round();
+      int proportionalHeight =
+          (image.height * targetWidth / image.width).round();
       int reducedHeight = (proportionalHeight * heightScale).round();
-      
+
       processedImage = img.copyResize(
         image,
         width: targetWidth,
@@ -484,7 +490,7 @@ class CatPrinterService {
       // Image is already narrow enough, but still apply scale factors
       int reducedWidth = (image.width * widthScale).round();
       int reducedHeight = (image.height * heightScale).round();
-      
+
       processedImage = img.copyResize(
         image,
         width: reducedWidth,
@@ -521,17 +527,17 @@ class CatPrinterService {
     for (int y = 0; y < rgbaImage.height; y++) {
       List<int> bmp = [];
       int bit = 0;
-      
+
       // Process setiap pixel seperti blog (bukan 8 pixel sekaligus)
       // Tapi kita perlu memastikan ukuran bitmap sesuai dengan paper width
       for (int x = 0; x < _model!.paperWidth; x++) {
         if (bit % 8 == 0) {
           bmp.add(0x00);
         }
-        
+
         // Shift right dulu seperti blog
         bmp[bit ~/ 8] >>= 1;
-        
+
         // Check if we're within image bounds
         if (x < rgbaImage.width) {
           // Get RGBA values seperti blog
@@ -540,35 +546,39 @@ class CatPrinterService {
           int g = pixel.g.toInt();
           int b = pixel.b.toInt();
           int a = pixel.a.toInt();
-          
+
           // Apply threshold seperti blog: (r < 0x80 and g < 0x80 and b < 0x80 and a > 0x80)
-          double thresholdValue = threshold ?? 128.0; // Default 0x80 = 128 seperti blog
-          if (r < thresholdValue && g < thresholdValue && b < thresholdValue && a > thresholdValue) {
+          double thresholdValue =
+              threshold ?? 128.0; // Default 0x80 = 128 seperti blog
+          if (r < thresholdValue &&
+              g < thresholdValue &&
+              b < thresholdValue &&
+              a > thresholdValue) {
             bmp[bit ~/ 8] |= 0x80; // Set MSB seperti blog
           }
         }
         // Jika di luar bounds image, biarkan sebagai 0 (putih)
-        
+
         bit++;
       }
-      
+
       // Check if line is empty (optimization)
       bool lineEmpty = bmp.every((byte) => byte == 0);
       if (lineEmpty && !_config.dryRun) {
         continue; // Skip empty lines
       }
-      
+
       if (_config.dryRun) {
         bmp = List.filled(bmp.length, 0); // Empty data for dry run
       }
-      
+
       // Send bitmap line
       await _sendCommand(PrinterCommander.getDrawBitmapCommand(bmp));
       // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
       // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
-      
+
       // Add delay seperti blog - 40ms untuk prevent printer jamming
-      await Future.delayed(Duration(milliseconds: 40));
+      // await Future.delayed(Duration(milliseconds: 40));
     }
 
     await _finish();
