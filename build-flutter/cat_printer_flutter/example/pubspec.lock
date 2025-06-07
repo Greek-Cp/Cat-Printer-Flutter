@@ -113,7 +113,7 @@ packages:
     source: hosted
     version: "2.1.3"
   file_picker:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: file_picker
       sha256: "1bbf65dd997458a08b531042ec3794112a6c39c07c37ff22113d2e7e4f81d4e4"
@@ -200,7 +200,7 @@ packages:
     source: sdk
     version: "0.0.0"
   image:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: image
       sha256: "4e973fcf4caae1a4be2fa0a13157aa38a8f9cb049db6529aa00b4d71abc4d928"

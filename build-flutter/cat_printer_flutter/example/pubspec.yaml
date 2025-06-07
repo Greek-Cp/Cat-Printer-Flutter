@@ -16,6 +16,10 @@ dependencies:
   
   # UI dependencies
   cupertino_icons: ^1.0.8
+  
+  # Image processing dependencies
+  file_picker: ^6.2.1
+  image: ^4.1.7
 
 dev_dependencies:
   flutter_test:
