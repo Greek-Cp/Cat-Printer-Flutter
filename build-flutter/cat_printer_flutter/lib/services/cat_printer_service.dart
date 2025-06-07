@@ -3,6 +3,9 @@
 
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:image/image.dart' as img;
 import '../models/printer_models.dart';
@@ -633,5 +636,138 @@ class CatPrinterService {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  /// Print widget - converts widget to image and prints it
+  /// This function allows developers to directly print any Flutter widget
+  Future<void> printWidget(
+    Widget widget, {
+    double? threshold,
+    int? energy,
+    String ditherType = 'threshold',
+    double widthScale = 0.6,
+    double heightScale = 0.5,
+    double pixelRatio = 1.0,
+    Size? customSize,
+  }) async {
+    if (!_isConnected || _model == null) {
+      throw Exception('Printer not connected');
+    }
+
+    try {
+      // Convert widget to image
+      img.Image? image = await _widgetToImage(
+        widget,
+        pixelRatio: pixelRatio,
+        customSize: customSize,
+      );
+
+      if (image == null) {
+        throw Exception('Failed to convert widget to image');
+      }
+
+      // Use existing printImage function
+      await printImage(
+        image,
+        threshold: threshold,
+        energy: energy,
+        ditherType: ditherType,
+        widthScale: widthScale,
+        heightScale: heightScale,
+      );
+    } catch (e) {
+      throw Exception('Failed to print widget: $e');
+    }
+  }
+
+  /// Convert widget to image using RenderRepaintBoundary
+  Future<img.Image?> _widgetToImage(
+    Widget widget, {
+    double pixelRatio = 1.0,
+    Size? customSize,
+  }) async {
+    try {
+      // Calculate size based on printer paper width if not provided
+      Size targetSize = customSize ?? Size(
+        _model!.paperWidth.toDouble(),
+        _model!.paperWidth.toDouble(), // Square by default
+      );
+
+      // Create a repaint boundary to capture the widget
+      final RenderRepaintBoundary repaintBoundary = RenderRepaintBoundary();
+      
+      // Create a pipeline owner and build owner
+      final PipelineOwner pipelineOwner = PipelineOwner();
+      final BuildOwner buildOwner = BuildOwner(focusManager: FocusManager());
+
+      // Create a render view to render the widget
+      final RenderView renderView = RenderView(
+        configuration: ViewConfiguration(
+          logicalConstraints: BoxConstraints.tight(targetSize),
+          devicePixelRatio: pixelRatio,
+        ),
+        view: WidgetsBinding.instance.platformDispatcher.views.first,
+      );
+
+      // Set up the render tree properly
+      renderView.child = repaintBoundary;
+      pipelineOwner.rootNode = renderView;
+      renderView.prepareInitialFrame();
+
+      // Build the widget tree
+      final RenderObjectToWidgetElement<RenderBox> rootElement =
+          RenderObjectToWidgetAdapter<RenderBox>(
+        container: repaintBoundary,
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: targetSize,
+              devicePixelRatio: pixelRatio,
+            ),
+            child: Material(
+              color: Colors.white,
+              child: widget,
+            ),
+          ),
+        ),
+      ).attachToRenderTree(buildOwner);
+      
+      // Build and layout with proper sequence
+      buildOwner.buildScope(rootElement);
+      buildOwner.finalizeTree();
+      
+      // Flush the pipeline in correct order
+      pipelineOwner.flushLayout();
+      pipelineOwner.flushCompositingBits();
+      pipelineOwner.flushPaint();
+
+      // Capture the image
+      final ui.Image uiImage = await repaintBoundary.toImage(
+        pixelRatio: pixelRatio,
+      );
+
+      // Convert to byte data
+      final ByteData? byteData = await uiImage.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+
+      if (byteData == null) {
+        return null;
+      }
+
+      // Convert to image package format
+      final Uint8List pngBytes = byteData.buffer.asUint8List();
+      final img.Image? image = img.decodePng(pngBytes);
+
+      // Clean up
+      uiImage.dispose();
+      // Note: BuildOwner doesn't have dispose method in current Flutter version
+
+      return image;
+    } catch (e) {
+      print('Error converting widget to image: $e');
+      return null;
+    }
   }
 }

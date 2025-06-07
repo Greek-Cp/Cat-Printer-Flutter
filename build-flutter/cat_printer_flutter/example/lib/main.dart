@@ -240,6 +240,307 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
     }
   }
 
+  /// Print sample widget - demonstrates printWidget functionality
+  Future<void> _printSampleWidget() async {
+    if (!_printerService.isConnected) {
+      _showSnackBar('Please connect to a printer first');
+      return;
+    }
+
+    try {
+      setState(() {
+        _statusMessage = 'Printing sample widget...';
+      });
+
+      // Create a math game widget optimized for 57mm thermal paper
+      Widget sampleWidget = Container(
+        width: 384, // Standard width for 57mm thermal paper
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: Colors.black, width: 1),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            const Text(
+              'Math Challenge! 🎯',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+            const Divider(color: Colors.black, thickness: 1),
+            const SizedBox(height: 8),
+
+            // Game content
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.black, width: 1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Solve This Problem:',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '24 × 3 = ?',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Options
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildOptionBox('A. 62'),
+                _buildOptionBox('B. 72'),
+                _buildOptionBox('C. 82'),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Answer section
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: Colors.black,
+                  style: BorderStyle.none,
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Column(
+                children: [
+                  Text(
+                    'Correct Answer: B',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  Text(
+                    '24 × 3 = 72',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Footer
+            const Divider(color: Colors.black, thickness: 1),
+            Text(
+              'Printed: ${DateTime.now().toString().substring(0, 19)}',
+              style: const TextStyle(
+                fontSize: 10,
+                color: Colors.black,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      // Print the widget using printWidget function
+      await _printerService.printWidget(
+        sampleWidget,
+        threshold: _bitmapThreshold,
+        energy: _energyLevel,
+        widthScale: _useCustomImageSize ? _imageWidthScale : 0.6,
+        heightScale: _useCustomImageSize ? _imageHeightScale : 0.5,
+        customSize: const Size(400, 400), // Custom size for the widget
+      );
+
+      setState(() {
+        _statusMessage = 'Sample widget printed successfully';
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Widget print error: $e';
+      });
+    }
+  }
+
+  Widget _buildOptionBox(String text) {
+    return Container(
+      width: 60,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 16,
+          color: Colors.black,
+        ),
+      ),
+    );
+  }
+
+  /// Print custom widget - shows more complex widget printing
+  Future<void> _printCustomWidget() async {
+    if (!_printerService.isConnected) {
+      _showSnackBar('Please connect to a printer first');
+      return;
+    }
+
+    try {
+      setState(() {
+        _statusMessage = 'Printing custom widget...';
+      });
+
+      // Create a more complex widget
+      Widget customWidget = Container(
+        padding: const EdgeInsets.all(20),
+        color: Colors.white,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'RECEIPT',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Items
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text('Item 1',
+                    style: TextStyle(fontSize: 16, color: Colors.black)),
+                Text('\$10.00',
+                    style: TextStyle(fontSize: 16, color: Colors.black)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text('Item 2',
+                    style: TextStyle(fontSize: 16, color: Colors.black)),
+                Text('\$15.50',
+                    style: TextStyle(fontSize: 16, color: Colors.black)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Divider(color: Colors.black, thickness: 1),
+            const SizedBox(height: 8),
+
+            // Total
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text(
+                  'TOTAL',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+                Text(
+                  '\$25.50',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // QR Code placeholder
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.black, width: 2),
+              ),
+              child: const Center(
+                child: Text(
+                  'QR\nCODE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Thank you!',
+              style: const TextStyle(
+                fontSize: 16,
+                fontStyle: FontStyle.italic,
+                color: Colors.black,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      // Print the custom widget
+      await _printerService.printWidget(
+        customWidget,
+        threshold: _bitmapThreshold,
+        energy: _energyLevel,
+        widthScale: _useCustomImageSize
+            ? _imageWidthScale
+            : 0.8, // Slightly larger for receipt
+        heightScale: _useCustomImageSize ? _imageHeightScale : 0.7,
+        customSize: const Size(280, 500), // Receipt-like dimensions
+      );
+
+      setState(() {
+        _statusMessage = 'Custom widget printed successfully';
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Custom widget print error: $e';
+      });
+    }
+  }
+
   /// Show snackbar message
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -661,6 +962,20 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                           onPressed: _pickAndPrintImage,
                           icon: const Icon(Icons.image),
                           label: const Text('Pick & Print Image'),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Widget Printing
+                        ElevatedButton.icon(
+                          onPressed: _printSampleWidget,
+                          icon: const Icon(Icons.widgets),
+                          label: const Text('Print Sample Widget'),
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          onPressed: _printCustomWidget,
+                          icon: const Icon(Icons.dashboard_customize),
+                          label: const Text('Print Custom Widget'),
                         ),
                       ],
                     ),
