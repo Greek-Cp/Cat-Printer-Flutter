@@ -1,171 +1,232 @@
 # Cat Printer Flutter
 
-Aplikasi Flutter untuk menghubungkan dan mencetak ke Cat Printer melalui Bluetooth. Aplikasi ini diporting dari kode Python Cat-Printer dengan semua data dan protokol komunikasi yang sama.
+A Flutter library for connecting and printing to Cat Printer via Bluetooth. This library is ported from the Python Cat-Printer implementation with all data and communication protocols preserved.
 
-## Fitur
+## Features
 
-- ✅ Scan dan deteksi Cat Printer via Bluetooth
-- ✅ Koneksi ke berbagai model Cat Printer (GB01, GB02, GB03, MX05, MX06, MX10, dll)
-- ✅ Print teks sederhana
-- ✅ Print gambar dari galeri
-- ✅ Konfigurasi printer (energy, speed, quality, dll)
-- ✅ Flow control untuk komunikasi yang stabil
-- ✅ Support untuk semua karakteristik Bluetooth dari kode Python
+- ✅ Scan and detect Cat Printer via Bluetooth
+- ✅ Connect to various Cat Printer models (GB01, GB02, GB03, MX05, MX06, MX10, etc.)
+- ✅ Print simple text
+- ✅ Print images from gallery
+- ✅ Configurable printer settings (energy, speed, quality, etc.)
+- ✅ Flow control for stable communication
+- ✅ Support for all Bluetooth characteristics from Python code
 
-## Model Printer yang Didukung
+## Supported Printer Models
 
-Aplikasi ini mendukung semua model yang sama dengan kode Python:
+This library supports all the same models as the Python implementation:
 - **GB01** - Paper width: 384px
 - **GB02** - Paper width: 384px  
 - **GB03** - Paper width: 384px
 - **MX05** - Paper width: 384px
 - **MX06** - Paper width: 384px
-- **MX10** - Paper width: 576px
+- **MX10** - Paper width: 384px
 - **YT01** - Paper width: 384px
 
-## Persyaratan
+## Installation
 
-- Flutter SDK (>=3.0.0)
-- Android SDK (untuk Android)
-- Bluetooth Low Energy (BLE) support
-- Permissions: Bluetooth, Location (untuk Android)
-
-## Dependencies
-
-Semua dependencies sudah dikonfigurasi di `pubspec.yaml`:
+Add this to your package's `pubspec.yaml` file:
 
 ```yaml
 dependencies:
-  flutter_blue_plus: ^1.14.6    # Bluetooth communication
-  image: ^4.1.3                 # Image processing
-  permission_handler: ^11.0.1   # Permissions
-  file_picker: ^6.1.1          # File selection
-  path_provider: ^2.1.1        # File paths
+  cat_printer_flutter:
+    git:
+      url: https://github.com/yanuartrilaksono/Cat-Printer-Flutter.git
+      path: build-flutter/cat_printer_flutter
 ```
 
-## Instalasi
+Or if you're using it locally:
 
-1. **Clone repository dan masuk ke folder Flutter:**
-   ```bash
-   cd build-flutter/cat_printer_flutter
-   ```
+```yaml
+dependencies:
+  cat_printer_flutter:
+    path: ../path/to/cat_printer_flutter
+```
 
-2. **Install dependencies:**
-   ```bash
-   flutter pub get
-   ```
+Then run:
 
-3. **Jalankan aplikasi:**
-   ```bash
-   flutter run
-   ```
+```bash
+flutter pub get
+```
 
-## Cara Penggunaan
+## Usage
 
-### 1. Scan untuk Cat Printer
-- Buka aplikasi
-- Tap tombol "Scan for Printers"
-- Tunggu hingga Cat Printer terdeteksi
+### Basic Usage
 
-### 2. Koneksi ke Printer
-- Pilih printer dari daftar yang terdeteksi
-- Tap tombol "Connect"
-- Status akan berubah menjadi "Connected" jika berhasil
-
-### 3. Print Teks
-- Masukkan teks di field "Text to Print"
-- Tap tombol "Print Text"
-- Teks akan dicetak ke printer
-
-### 4. Print Gambar
-- Tap tombol "Pick & Print Image"
-- Pilih gambar dari galeri
-- Gambar akan otomatis dikonversi dan dicetak
-
-## Struktur Kode
-
-### Data Models (`lib/models/`)
-- `printer_models.dart` - Model printer dan konfigurasi (ported dari Python)
-
-### Services (`lib/services/`)
-- `cat_printer_service.dart` - Service utama untuk komunikasi printer
-- `printer_commander.dart` - Command dan protokol komunikasi (ported dari Python)
-
-### Main App
-- `main.dart` - UI utama aplikasi
-
-## Protokol Komunikasi
-
-Aplikasi ini menggunakan protokol komunikasi yang sama persis dengan kode Python:
-
-### Bluetooth Characteristics
-- **TX Characteristic:** `0000ae01-0000-1000-8000-00805f9b34fb`
-- **RX Characteristic:** `0000ae02-0000-1000-8000-00805f9b34fb`
-
-### Commands (dari Python)
-- Device state, start/end printing
-- Set DPI, speed, energy
-- Draw bitmap, feed paper
-- Flow control (pause/resume)
-
-### Data Processing
-- CRC8 checksum calculation
-- Image to bitmap conversion
-- MTU-based data chunking
-- Flow control handling
-
-## Konfigurasi Printer
-
-Konfigurasi default (sama dengan Python):
 ```dart
-class PrinterConfig {
-  double energy = 10000;        // Printer energy
-  int speed = 3;               // Print speed
-  int quality = 200;           // Print quality (DPI)
-  int mtu = 20;               // MTU size
-  double scanTime = 15;        // Scan timeout
-  int connectionTimeout = 10;  // Connection timeout
-  bool flipH = false;          // Horizontal flip
-  bool flipV = false;          // Vertical flip
-  bool dryRun = false;         // Dry run mode
-  bool fake = false;           // Fake printer mode
-  bool dump = false;           // Dump mode
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
+// Create service instance
+final CatPrinterService printerService = CatPrinterService();
+
+// Scan for Cat Printers
+List<BluetoothDevice> devices = await printerService.scanForDevices();
+
+// Connect to a printer
+if (devices.isNotEmpty) {
+  await printerService.connect(devices.first);
 }
+
+// Print text
+if (printerService.isConnected) {
+  await printerService.printText('Hello Cat Printer!');
+}
+
+// Print image
+import 'package:image/image.dart' as img;
+img.Image? image = img.decodeImage(imageBytes);
+if (image != null) {
+  await printerService.printImage(image);
+}
+
+// Disconnect
+await printerService.disconnect();
 ```
 
-## Troubleshooting
+### Advanced Configuration
 
-### Bluetooth Issues
-- Pastikan Bluetooth aktif
-- Grant permission Bluetooth dan Location
-- Restart aplikasi jika scan tidak menemukan device
+```dart
+// Custom printer configuration
+final config = PrinterConfig(
+  energy: 6000,        // Energy level (higher = darker)
+  speed: 32,           // Print speed
+  quality: 5,          // Print quality (1-5)
+  scanTime: 10.0,      // Bluetooth scan time
+);
 
-### Connection Issues
-- Pastikan printer dalam mode pairing
-- Coba disconnect dan connect ulang
-- Restart printer jika perlu
+// Print with custom settings
+await printerService.printText(
+  'Custom Print',
+  fontSize: 24,
+  threshold: 150.0,
+  energy: 6000,
+  ditherType: 'threshold',
+);
 
-### Print Issues
-- Pastikan printer memiliki kertas
-- Cek battery printer
-- Coba dengan teks sederhana dulu sebelum gambar
+// Print image with scaling
+await printerService.printImage(
+  image,
+  threshold: 150.0,
+  energy: 6000,
+  widthScale: 0.8,
+  heightScale: 0.7,
+);
+```
 
-## Perbedaan dengan Kode Python
+### Permissions
 
-1. **Text Rendering:** Implementasi sederhana (placeholder), bisa ditingkatkan dengan library text rendering
-2. **Image Processing:** Menggunakan package `image` Dart instead of PIL
-3. **Bluetooth:** Menggunakan `flutter_blue_plus` instead of `bleak`
-4. **UI:** Native Flutter UI instead of web interface
+Make sure to add the required permissions in your app:
 
-## Pengembangan Selanjutnya
+#### Android (`android/app/src/main/AndroidManifest.xml`)
 
-- [ ] Implementasi text rendering yang lebih baik
-- [ ] Support untuk QR code printing
-- [ ] Batch printing
-- [ ] Printer settings UI
-- [ ] Print history
-- [ ] Custom image filters
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+```
 
-## Lisensi
+#### iOS (`ios/Runner/Info.plist`)
 
-Sama dengan proyek Python Cat-Printer.
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>This app needs Bluetooth access to connect to Cat Printer</string>
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>This app needs Bluetooth access to connect to Cat Printer</string>
+```
+
+## API Reference
+
+### CatPrinterService
+
+Main service class for Cat Printer operations.
+
+#### Methods
+
+- `Future<List<BluetoothDevice>> scanForDevices({Duration? timeout, bool showAllDevices = false})` - Scan for Cat Printer devices
+- `Future<void> connect(BluetoothDevice device)` - Connect to a printer
+- `Future<void> disconnect()` - Disconnect from printer
+- `Future<void> printText(String text, {int fontSize = 24, double threshold = 128.0, int energy = 4096, String ditherType = 'threshold'})` - Print text
+- `Future<void> printImage(img.Image image, {double threshold = 128.0, int energy = 4096, String ditherType = 'threshold', double widthScale = 0.6, double heightScale = 0.5})` - Print image
+
+#### Properties
+
+- `bool isConnected` - Connection status
+- `PrinterModel? model` - Connected printer model
+- `PrinterConfig config` - Printer configuration
+- `BluetoothDevice? device` - Connected device
+
+### PrinterModels
+
+Utility class for printer model information.
+
+#### Methods
+
+- `static PrinterModel? getModel(String name)` - Get printer model by name
+- `static bool isSupported(String name)` - Check if printer model is supported
+- `static List<String> getSupportedModels()` - Get list of supported models
+
+### PrinterConfig
+
+Configuration class for printer settings.
+
+#### Properties
+
+- `int energy` - Energy level (default: 4096)
+- `int speed` - Print speed (default: 32)
+- `int quality` - Print quality (default: 5)
+- `int mtu` - Bluetooth MTU size (default: 200)
+- `double scanTime` - Scan timeout (default: 4.0)
+- `double connectionTimeout` - Connection timeout (default: 5.0)
+
+## Example
+
+See the [example](example/) directory for a complete working example that demonstrates:
+
+- Scanning for Cat Printers
+- Connecting and disconnecting
+- Printing text with custom settings
+- Printing images from gallery
+- Real-time configuration adjustments
+
+To run the example:
+
+```bash
+cd example
+flutter pub get
+flutter run
+```
+
+## Requirements
+
+- Flutter SDK (>=3.0.0)
+- Dart SDK (>=3.5.0)
+- Android SDK (for Android)
+- Bluetooth Low Energy (BLE) support
+- Permissions: Bluetooth, Location (for Android)
+
+## Dependencies
+
+This library depends on:
+
+- `flutter_blue_plus: ^1.14.0` - Bluetooth communication
+- `image: ^4.0.17` - Image processing
+- `permission_handler: ^11.0.1` - Permissions
+- `file_picker: ^6.1.1` - File selection
+- `path_provider: ^2.1.1` - File paths
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Original Python Cat-Printer implementation
+- Flutter Blue Plus for Bluetooth communication
+- Image package for image processing

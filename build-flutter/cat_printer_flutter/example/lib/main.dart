@@ -9,8 +9,7 @@ import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'services/cat_printer_service.dart';
-import 'models/printer_models.dart';
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 
 void main() {
   runApp(const CatPrinterApp());
