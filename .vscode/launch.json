@@ -1,0 +1,69 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PBM",
+            "type": "python",
+            "request": "launch",
+            "program": "printer.py",
+            "args": [
+                "-m", "-f", "GB02", "dump.pbm"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Text (IM)",
+            "type": "python",
+            "request": "launch",
+            "program": "printer.py",
+            "args": [
+                "-m", "-f", "GB02", "-t", "16,Unifont", "COPYING"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Usual Bitmap",
+            "type": "python",
+            "request": "launch",
+            "program": "printer.py",
+            "args": [
+                "-m", "-f", "GB02", "-c", "image", "test.png"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Text (PF2)",
+            "type": "python",
+            "request": "launch",
+            "program": "printer.py",
+            "args": [
+                "-m", "-f", "GB02", "-t", "1,unifont,pf2", "dev-diary.txt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Debug Web Interface",
+            "type": "python",
+            "request": "launch",
+            "program": "server.py",
+            "args": ["-a", "-s"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
