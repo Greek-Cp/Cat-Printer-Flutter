@@ -45,6 +45,8 @@ class PrinterModels {
         name: 'MX11', paperWidth: 384, isNewKind: false, problemFeeding: true),
     'YT01': PrinterModel(
         name: 'YT01', paperWidth: 384, isNewKind: false, problemFeeding: false),
+    'MXW01': PrinterModel(
+        name: 'MXW01', paperWidth: 384, isNewKind: false, problemFeeding: false),
   };
 
   static PrinterModel? getModel(String name) {

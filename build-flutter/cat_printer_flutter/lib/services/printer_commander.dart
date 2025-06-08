@@ -5,6 +5,8 @@ class PrinterCommander {
   // Bluetooth characteristics from Python code
   static const String txCharacteristic = '0000ae01-0000-1000-8000-00805f9b34fb';
   static const String rxCharacteristic = '0000ae02-0000-1000-8000-00805f9b34fb';
+  // Data characteristic for MXW01 model (from C# implementation)
+  static const String dataCharacteristic = '0000ae03-0000-1000-8000-00805f9b34fb';
 
   // Command constants from Python code
   static const int startPrint = 0xa3;
@@ -24,6 +26,23 @@ class PrinterCommander {
   static const int retractPaper = 0xa0;
   static const int feedPaper = 0xa1;
   static const int drawBitmap = 0xa2;
+
+  // MXW01 specific commands (from C# implementation)
+  static const int getStatus = 0xa1;
+  static const int printIntensity = 0xa2;
+  static const int ejectPaper = 0xa3;
+  static const int retractPaperMXW01 = 0xa4;
+  static const int queryCount = 0xa7;
+  static const int print = 0xa9;
+  static const int printComplete = 0xaa;
+  static const int batteryLevel = 0xab;
+  static const int cancelPrint = 0xac;
+  static const int printDataFlush = 0xad;
+  static const int unknownAE = 0xae;
+  static const int getPrintType = 0xb0;
+  static const int getVersion = 0xb1;
+  static const int unknownB2 = 0xb2;
+  static const int unknownB3 = 0xb3;
 
   // Data flow control from Python code
   static const List<int> dataFlowPause = [
@@ -410,6 +429,82 @@ class PrinterCommander {
     return makeCommand(drawBitmap, bitmapData);
   }
 
+  // MXW01 specific command helpers (from C# implementation)
+  /// Create MXW01 command format: [0x22, 0x21, commandId, 0x00, dataLength(2 bytes), data, crc8, 0xFF]
+  static List<int> makeMXW01Command(int commandId, List<int> commandData) {
+    List<int> command = List.filled(8 + commandData.length, 0);
+    
+    command[0] = 0x22;
+    command[1] = 0x21;
+    command[2] = commandId;
+    command[3] = 0x00;
+    command[4] = commandData.length & 0xFF; // Little endian
+    command[5] = (commandData.length >> 8) & 0xFF;
+    
+    // Copy command data
+    for (int i = 0; i < commandData.length; i++) {
+      command[6 + i] = commandData[i];
+    }
+    
+    // Calculate CRC8 for command data only
+    command[6 + commandData.length] = crc8(commandData);
+    command[7 + commandData.length] = 0xFF;
+    
+    return command;
+  }
+
+  /// Get status command for MXW01
+  static List<int> getMXW01StatusCommand() {
+    return makeMXW01Command(getStatus, [0x00]);
+  }
+
+  /// Get version command for MXW01
+  static List<int> getMXW01VersionCommand() {
+    return makeMXW01Command(getVersion, [0x00]);
+  }
+
+  /// Get battery level command for MXW01
+  static List<int> getMXW01BatteryCommand() {
+    return makeMXW01Command(batteryLevel, [0x00]);
+  }
+
+  /// Set print intensity command for MXW01
+  static List<int> getMXW01PrintIntensityCommand(int intensity) {
+    if (intensity > 100) intensity = 100;
+    return makeMXW01Command(printIntensity, [intensity]);
+  }
+
+  /// Eject paper command for MXW01
+  static List<int> getMXW01EjectPaperCommand(int lineCount) {
+    return makeMXW01Command(ejectPaper, [
+      lineCount & 0xFF,
+      (lineCount >> 8) & 0xFF
+    ]);
+  }
+
+  /// Retract paper command for MXW01
+  static List<int> getMXW01RetractPaperCommand(int lineCount) {
+    return makeMXW01Command(retractPaperMXW01, [
+      lineCount & 0xFF,
+      (lineCount >> 8) & 0xFF
+    ]);
+  }
+
+  /// Print command for MXW01
+  static List<int> getMXW01PrintCommand(int lineCount, int printMode) {
+    return makeMXW01Command(print, [
+      lineCount & 0xFF,
+      (lineCount >> 8) & 0xFF,
+      0x30,
+      printMode
+    ]);
+  }
+
+  /// Print data flush command for MXW01
+  static List<int> getMXW01PrintDataFlushCommand() {
+    return makeMXW01Command(printDataFlush, [0x00]);
+  }
+
   /// Update device command - ported from Python code
   static List<int> getUpdateDeviceCommand() {
     return makeCommand(updateDevice, intToBytes(0x00));
@@ -423,5 +518,14 @@ class PrinterCommander {
   /// Drawing mode command - ported from blog implementation
   static List<int> getDrawingModeCommand(int mode) {
     return makeCommand(drawingMode, intToBytes(mode));
+  }
+
+  /// CRC8 calculation function - ported from Python implementation
+  static int crc8(List<int> data) {
+    int crc = 0;
+    for (int byte in data) {
+      crc = crc8Table[(crc ^ byte) & 0xFF];
+    }
+    return crc & 0xFF;
   }
 }
