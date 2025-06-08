@@ -41,6 +41,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
   BluetoothDevice? _connectedDevice;
   String _status = 'Ready';
   bool _isScanning = false;
+  bool _showAllDevices = false;
 
   // Simple settings - dapat diubah sesuai kebutuhan
   double _threshold = 150.0; // Threshold untuk kualitas print
@@ -84,11 +85,15 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
     });
 
     try {
-      final devices =
-          await _printer.scanForDevices(timeout: Duration(seconds: 10));
+      final devices = await _printer.scanForDevices(
+        timeout: Duration(seconds: 10),
+        showAllDevices: _showAllDevices,
+      );
       setState(() {
         _devices = devices;
-        _status = 'Found ${devices.length} device(s)';
+        _status = _showAllDevices
+            ? 'Found ${devices.length} device(s) (all devices)'
+            : 'Found ${devices.length} Cat Printer(s)';
       });
     } catch (e) {
       setState(() {
@@ -354,6 +359,22 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
               ),
               SizedBox(height: 16),
 
+              // Show all devices checkbox
+              CheckboxListTile(
+                title: Text('Show all Bluetooth devices'),
+                subtitle: Text(_showAllDevices
+                    ? 'Will show all discoverable devices'
+                    : 'Will show only Cat Printers'),
+                value: _showAllDevices,
+                onChanged: (bool? value) {
+                  setState(() {
+                    _showAllDevices = value ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              SizedBox(height: 8),
+
               // Scan button
               ElevatedButton.icon(
                 onPressed: _isScanning ? null : _scanDevices,
@@ -369,13 +390,21 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
 
               // Device list
               if (_devices.isNotEmpty) ...[
-                Text('Devices:',
+                Text(
+                    _showAllDevices
+                        ? 'All Bluetooth Devices:'
+                        : 'Cat Printers:',
                     style:
                         TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 SizedBox(height: 8),
                 ..._devices.map((device) => Card(
                       child: ListTile(
-                        title: Text(device.platformName),
+                        title: Text(device.platformName.isNotEmpty
+                            ? device.platformName
+                            : 'Unknown Device'),
+                        subtitle: _showAllDevices
+                            ? Text('ID: ${device.remoteId.str}')
+                            : null,
                         trailing: ElevatedButton(
                           onPressed: () => _connect(device),
                           child: Text('Connect'),
