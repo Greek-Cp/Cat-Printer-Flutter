@@ -1,190 +1,491 @@
-# Cat Printer Flutter Example
+# 🚀 Cat Printer Flutter - Examples
 
-This is an example application demonstrating how to use the `cat_printer_flutter` library to connect and print to Cat Printer devices via Bluetooth.
+## 📋 Overview
 
-## Features Demonstrated
+Contoh-contoh penggunaan library Cat Printer Flutter dengan **Extensible Architecture**.
 
-- 🔍 **Device Scanning** - Scan for Cat Printer devices or all Bluetooth devices
-- 🔗 **Connection Management** - Connect and disconnect from printers
-- 📝 **Text Printing** - Print custom text with configurable settings
-- 🖼️ **Image Printing** - Select and print images from gallery
-- ⚙️ **Real-time Configuration** - Adjust printer settings on the fly
-- 📊 **Status Monitoring** - Real-time connection and operation status
+## 🆕 New Extensible API Examples
 
-## Getting Started
-
-### Prerequisites
-
-- Flutter SDK (>=3.0.0)
-- A Cat Printer device (GB01, GB02, GB03, MX05, MX06, MX10, YT01)
-- Mobile device with Bluetooth support
-
-### Installation
-
-1. **Navigate to the example directory:**
-   ```bash
-   cd example
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Run the application:**
-   ```bash
-   flutter run
-   ```
-
-### Permissions Setup
-
-#### Android
-
-Ensure your `android/app/src/main/AndroidManifest.xml` includes:
-
-```xml
-<uses-permission android:name="android.permission.BLUETOOTH" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-```
-
-#### iOS
-
-Ensure your `ios/Runner/Info.plist` includes:
-
-```xml
-<key>NSBluetoothAlwaysUsageDescription</key>
-<string>This app needs Bluetooth access to connect to Cat Printer</string>
-<key>NSBluetoothPeripheralUsageDescription</key>
-<string>This app needs Bluetooth access to connect to Cat Printer</string>
-```
-
-## How to Use the Example
-
-### 1. Scanning for Devices
-
-- Open the app
-- Toggle "Show all Bluetooth devices" if you want to see all devices (not just Cat Printers)
-- Tap "Scan for Printers" or "Scan All Devices"
-- Wait for devices to appear in the list
-
-### 2. Connecting to a Printer
-
-- Select a Cat Printer from the scanned devices list
-- Tap "Connect" next to the device
-- Wait for the connection to establish
-- The status will show "Connected" and printer model information
-
-### 3. Printing Text
-
-- Enter your text in the "Text to Print" field
-- Optionally adjust advanced settings (energy, threshold, etc.)
-- Tap "Print Text"
-- The text will be printed on the Cat Printer
-
-### 4. Printing Images
-
-- Tap "Pick & Print Image"
-- Select an image from your device's gallery
-- The image will be automatically processed and printed
-- Adjust image scaling in advanced settings if needed
-
-### 5. Advanced Configuration
-
-- Expand "Advanced Settings (Optional)" to access:
-  - **Custom Image Size**: Enable to manually adjust width/height scaling
-  - **Energy Level**: Control print darkness (higher = darker)
-  - **Threshold**: Adjust image conversion quality
-
-## Code Structure
-
-The example demonstrates the following key concepts:
-
-### Basic Usage
+### 1. Basic Usage
 
 ```dart
 import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 
-// Create service instance
-final CatPrinterService _printerService = CatPrinterService();
-
-// Scan for devices
-List<BluetoothDevice> devices = await _printerService.scanForDevices();
-
-// Connect to printer
-await _printerService.connect(device);
-
-// Print text
-await _printerService.printText('Hello Cat Printer!');
-
-// Print image
-await _printerService.printImage(image);
+void main() async {
+  // Initialize library
+  CatPrinterExtensible.initialize();
+  
+  // Create printer instance
+  final printer = await EasyPrinter.create('MXW01');
+  
+  if (printer != null) {
+    // Connect to device
+    final connected = await printer.connect('device_bluetooth_id');
+    
+    if (connected) {
+      // Execute commands
+      await printer.execute('print_intensity', {'intensity': 75});
+      await printer.execute('get_status');
+      await printer.execute('battery_level');
+      
+      // Disconnect
+      await printer.disconnect();
+    }
+  }
+}
 ```
 
-### Advanced Configuration
+### 2. Adding Custom Model
 
 ```dart
-// Print with custom settings
-await _printerService.printText(
-  text,
-  fontSize: 24,
-  threshold: 150.0,
-  energy: 6000,
-  ditherType: 'threshold',
-);
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 
-// Print image with scaling
-await _printerService.printImage(
-  image,
-  threshold: 150.0,
-  energy: 6000,
-  widthScale: 0.8,
-  heightScale: 0.7,
-);
+void main() {
+  CatPrinterExtensible.initialize();
+  
+  // Add new model using template
+  final customModel = CatPrinterExtensible.createCustomModel(
+    modelName: 'CUSTOM01',
+    modelVersion: '1.0',
+    paperWidth: 384,
+    protocolType: 'classic',
+    supportedCommands: [
+      'start_print',
+      'set_energy',
+      'set_speed',
+      'draw_bitmap',
+    ],
+    customConfiguration: {
+      'has_wifi': true,
+      'supports_color': false,
+    },
+  );
+  
+  // Register the model
+  CatPrinterExtensible.registerModel('CUSTOM01', () => customModel);
+  
+  // Now you can use it
+  final printer = await EasyPrinter.create('CUSTOM01');
+}
 ```
 
-## Troubleshooting
+### 3. Adding Custom Command
 
-### Bluetooth Issues
+```dart
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 
-- Ensure Bluetooth is enabled on your device
-- Grant all required permissions
-- Try restarting the app if devices don't appear
+void main() {
+  CatPrinterExtensible.initialize();
+  
+  // Add custom command using template
+  final wifiCommand = CatPrinterExtensible.createCustomCommand(
+    commandId: 'set_wifi_config',
+    commandName: 'Set WiFi Configuration',
+    supportedModels: ['CUSTOM01'],
+    parameters: {
+      'category': 'network',
+      'protocol': 'classic',
+    },
+    parameterSchema: {
+      'type': 'object',
+      'properties': {
+        'ssid': {
+          'type': 'string',
+          'maxLength': 32,
+          'description': 'WiFi SSID',
+        },
+        'password': {
+          'type': 'string',
+          'maxLength': 64,
+          'description': 'WiFi Password',
+        },
+      },
+      'required': ['ssid', 'password'],
+    },
+    dataGenerator: (params) {
+      final ssid = params['ssid'] as String;
+      final password = params['password'] as String;
+      
+      List<int> data = [];
+      data.addAll(ssid.codeUnits);
+      data.add(0x00); // Separator
+      data.addAll(password.codeUnits);
+      
+      return data;
+    },
+  );
+  
+  // Register the command
+  CatPrinterExtensible.registerCommand('set_wifi_config', () => wifiCommand);
+  
+  // Use the command
+  final printer = await EasyPrinter.create('CUSTOM01');
+  await printer.connect('device_id');
+  await printer.execute('set_wifi_config', {
+    'ssid': 'MyWiFi',
+    'password': 'MyPassword123',
+  });
+}
+```
 
-### Connection Issues
+### 4. Advanced Custom Model Class
 
-- Make sure the Cat Printer is powered on
-- Ensure the printer is in pairing mode
-- Try disconnecting and reconnecting
-- Restart the printer if necessary
+```dart
+class AdvancedPrinterModel extends BasePrinterModel {
+  @override
+  String get modelName => 'ADV01';
 
-### Printing Issues
+  @override
+  String get modelVersion => '2.0';
 
-- Check that the printer has paper loaded
-- Verify the printer battery level
-- Try printing simple text before images
-- Adjust energy levels if prints are too light/dark
+  @override
+  int get paperWidth => 576; // Wider paper
 
-## Supported Printer Models
+  @override
+  bool get supportsNewCommands => true;
 
-This example works with all supported Cat Printer models:
+  @override
+  bool get hasFeedingProblems => false;
 
-- **GB01** - Paper width: 384px
-- **GB02** - Paper width: 384px
-- **GB03** - Paper width: 384px
-- **MX05** - Paper width: 384px
-- **MX06** - Paper width: 384px
-- **MX10** - Paper width: 384px
-- **YT01** - Paper width: 384px
+  @override
+  String get protocolType => 'classic';
 
-## Learn More
+  @override
+  List<String> getSupportedCommands() {
+    return [
+      'start_print',
+      'set_energy',
+      'set_speed',
+      'draw_bitmap',
+      'set_color_mode', // Custom command
+      'get_temperature', // Custom command
+    ];
+  }
 
-- [Cat Printer Flutter Library Documentation](../README.md)
-- [Flutter Blue Plus Documentation](https://pub.dev/packages/flutter_blue_plus)
-- [Image Package Documentation](https://pub.dev/packages/image)
+  @override
+  Map<String, dynamic> getConfiguration() {
+    var config = super.getConfiguration();
+    config.addAll({
+      'supports_color_printing': true,
+      'has_temperature_sensor': true,
+      'max_resolution': 300,
+      'bluetooth_version': '5.0',
+    });
+    return config;
+  }
 
-## Contributing
+  @override
+  Map<String, dynamic> getConstraints() {
+    return {
+      'max_energy': 32768,
+      'max_speed': 64,
+      'max_quality': 25,
+      'color_modes': ['monochrome', 'rgb'],
+      'temperature_range': {'min': -10, 'max': 60},
+    };
+  }
+}
 
-If you find issues with this example or have suggestions for improvements, please feel free to submit a Pull Request or open an Issue.
+// Register the advanced model
+CatPrinterExtensible.registerModel('ADV01', () => AdvancedPrinterModel());
+```
+
+### 5. Flutter Widget Integration
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+
+class PrinterDemoPage extends StatefulWidget {
+  @override
+  _PrinterDemoPageState createState() => _PrinterDemoPageState();
+}
+
+class _PrinterDemoPageState extends State<PrinterDemoPage> {
+  EasyPrinter? printer;
+  List<IPrinterModel> availableModels = [];
+  String? selectedModel;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializePrinter();
+  }
+
+  void _initializePrinter() {
+    // Initialize with custom models
+    CatPrinterExtensible.initialize();
+    
+    // Register custom model
+    final customModel = CatPrinterExtensible.createCustomModel(
+      modelName: 'DEMO01',
+      modelVersion: '1.0',
+      paperWidth: 384,
+      protocolType: 'classic',
+      supportedCommands: ['start_print', 'set_energy'],
+    );
+    CatPrinterExtensible.registerModel('DEMO01', () => customModel);
+    
+    // Load available models
+    setState(() {
+      availableModels = CatPrinterExtensible.getAvailableModels();
+    });
+  }
+
+  Future<void> _connectToPrinter(String modelName) async {
+    printer = await EasyPrinter.create(modelName);
+    if (printer != null) {
+      // Simulate connection (replace with real device ID)
+      final connected = await printer!.connect('simulated_device_id');
+      
+      setState(() {
+        selectedModel = connected ? modelName : null;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(connected 
+            ? 'Connected to $modelName' 
+            : 'Failed to connect to $modelName'
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _executeTestCommand() async {
+    if (printer != null && printer!.isConnected) {
+      try {
+        await printer!.execute('set_energy', {'energy': 5000});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Test command executed successfully')),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Cat Printer Demo'),
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Available Printer Models:',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 16),
+            
+            // Models list
+            Expanded(
+              child: ListView.builder(
+                itemCount: availableModels.length,
+                itemBuilder: (context, index) {
+                  final model = availableModels[index];
+                  final isSelected = selectedModel == model.modelName;
+                  
+                  return Card(
+                    color: isSelected ? Colors.green[100] : null,
+                    child: ListTile(
+                      title: Text('${model.modelName} (v${model.modelVersion})'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Protocol: ${model.protocolType}'),
+                          Text('Paper Width: ${model.paperWidth}px'),
+                          Text('Commands: ${model.getSupportedCommands().length}'),
+                        ],
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isSelected)
+                            Icon(Icons.check_circle, color: Colors.green)
+                          else
+                            ElevatedButton(
+                              onPressed: () => _connectToPrinter(model.modelName),
+                              child: Text('Connect'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            
+            // Test commands
+            if (selectedModel != null) ...[
+              SizedBox(height: 16),
+              Text(
+                'Test Commands:',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 8),
+              Row(
+                children: [
+                  ElevatedButton(
+                    onPressed: _executeTestCommand,
+                    child: Text('Set Energy'),
+                  ),
+                  SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final commands = printer!.availableCommands;
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: Text('Available Commands'),
+                          content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: commands.map((cmd) => 
+                              Text('• ${cmd.commandName} (${cmd.commandId})')
+                            ).toList(),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: Text('OK'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    child: Text('Show Commands'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+      
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          final info = CatPrinterExtensible.getLibraryInfo();
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Library Information'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Version: ${info['version']}'),
+                    Text('Models: ${info['registered_models']?.length ?? 0}'),
+                    Text('Commands: ${info['registered_commands']?.length ?? 0}'),
+                    Text('Protocols: ${info['registered_protocols']?.length ?? 0}'),
+                    SizedBox(height: 8),
+                    Text('Features:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ...((info['features'] as List?)?.map((f) => Text('• $f')) ?? []),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('OK'),
+                ),
+              ],
+            ),
+          );
+        },
+        child: Icon(Icons.info),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    printer?.disconnect();
+    super.dispose();
+  }
+}
+```
+
+## 🔄 Legacy API Examples (Backward Compatible)
+
+### Basic Legacy Usage
+
+```dart
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+
+void main() async {
+  final printerService = CatPrinterService();
+  
+  // Connect to device
+  await printerService.connect(device);
+  
+  // Print text
+  await printerService.printText('Hello Cat Printer!');
+  
+  // Print image
+  await printerService.printImage(imageData);
+  
+  // Disconnect
+  await printerService.disconnect();
+}
+```
+
+## 🧪 Testing Your Extensions
+
+### 1. Validate Parameters
+
+```dart
+// Test parameter validation
+final valid = CatPrinterExtensible.validateCommandParameters(
+  'set_wifi_config',
+  {'ssid': 'TestWiFi', 'password': 'test123'},
+);
+print('Parameters valid: $valid');
+```
+
+### 2. Check Model Info
+
+```dart
+// Get model information
+final modelInfo = CatPrinterExtensible.getModelInfo('CUSTOM01');
+print('Model config: $modelInfo');
+
+final constraints = CatPrinterExtensible.getModelConstraints('CUSTOM01');
+print('Model constraints: $constraints');
+```
+
+### 3. Command Schema
+
+```dart
+// Get command schema
+final schema = CatPrinterExtensible.getCommandSchema('set_wifi_config');
+print('Command schema: $schema');
+```
+
+## 📱 Complete Demo App
+
+Lihat file `example/lib/main.dart` untuk demo app lengkap yang menunjukkan:
+- ✅ Model registration
+- ✅ Command registration  
+- ✅ Auto-detection
+- ✅ Parameter validation
+- ✅ Error handling
+- ✅ UI integration
+
+## 🔧 Development Tips
+
+1. **Always initialize** library sebelum register model/command baru
+2. **Use templates** untuk model/command sederhana
+3. **Create custom classes** untuk logic kompleks
+4. **Validate parameters** sebelum eksekusi command
+5. **Handle errors** dengan proper try-catch
+6. **Test thoroughly** sebelum production
+
+Happy coding! 🎉

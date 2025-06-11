@@ -1,710 +1,258 @@
-// Cat Printer Service - Main service for Cat Printer operations
-// Ported from Python printer.py
-
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
-import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:image/image.dart' as img;
-import '../models/printer_models.dart';
-import 'printer_commander.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/rendering.dart';
+import 'dart:ui' as ui;
 
+// Import extensible architecture
+import '../cat_printer_flutter_extensible.dart';
+import '../core/interfaces.dart';
+
+/// Legacy Cat Printer Service for Backward Compatibility
+///
+/// This class maintains the old API while using the new extensible
+/// architecture behind the scenes.
 class CatPrinterService {
+  EasyPrinter? _extensiblePrinter;
   BluetoothDevice? _device;
-  BluetoothCharacteristic? _txCharacteristic;
-  BluetoothCharacteristic? _rxCharacteristic;
-  BluetoothCharacteristic? _dataCharacteristic; // For MXW01 model
-  PrinterModel? _model;
+  bool _isConnected = false;
+
+  /// Configuration for printer settings
   PrinterConfig _config = PrinterConfig();
 
-  bool _isConnected = false;
-  bool _isPaused = false;
-  List<int> _pendingData = [];
-
-  StreamSubscription? _deviceStateSubscription;
-  StreamSubscription? _rxSubscription;
-
-  // Getters
+  /// Check if printer is connected
   bool get isConnected => _isConnected;
-  PrinterModel? get model => _model;
-  PrinterConfig get config => _config;
+
+  /// Get current device
   BluetoothDevice? get device => _device;
 
-  /// Scan for Cat Printer devices - ported from Python code
-  /// If showAllDevices is true, returns all Bluetooth devices found (similar to Python's everything=True)
-  Future<List<BluetoothDevice>> scanForDevices(
-      {Duration? timeout, bool showAllDevices = false}) async {
-    List<BluetoothDevice> catPrinters = [];
-
-    try {
-      // Check if Bluetooth is available
-      if (await FlutterBluePlus.isAvailable == false) {
-        throw Exception('Bluetooth not available');
-      }
-
-      // Check if Bluetooth is on
-      if (await FlutterBluePlus.isOn == false) {
-        throw Exception('Bluetooth is turned off');
-      }
-
-      // Start scanning with timeout
-      Duration scanDuration =
-          timeout ?? Duration(seconds: _config.scanTime.toInt());
-      print('Starting Bluetooth scan for ${scanDuration.inSeconds} seconds...');
-
-      await FlutterBluePlus.startScan(
-        timeout: scanDuration,
-      );
-
-      // Listen to scan results during the entire scan period
-      StreamSubscription? scanSubscription;
-      Completer<void> scanCompleter = Completer<void>();
-
-      scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-        for (ScanResult result in results) {
-          String platformName = result.device.platformName;
-          String advertisedName = result.advertisementData.advName;
-
-          // Debug: print all discovered devices
-          print(
-              'Found device: platformName="$platformName", advertisedName="$advertisedName", rssi=${result.rssi}');
-
-          // If showAllDevices is true, add all devices (like Python's everything=True)
-          if (showAllDevices) {
-            if (!catPrinters.any((d) => d.remoteId == result.device.remoteId)) {
-              print('Added device: $platformName / $advertisedName');
-              catPrinters.add(result.device);
-            }
-          } else {
-            // Check both platform name and advertised name for supported models
-            bool isSupported = PrinterModels.isSupported(platformName) ||
-                PrinterModels.isSupported(advertisedName);
-
-            if (isSupported) {
-              if (!catPrinters
-                  .any((d) => d.remoteId == result.device.remoteId)) {
-                print('Added Cat Printer: $platformName / $advertisedName');
-                catPrinters.add(result.device);
-              }
-            }
-          }
-        }
-      });
-
-      // Wait for scan to complete
-      FlutterBluePlus.isScanning.listen((isScanning) {
-        if (!isScanning && !scanCompleter.isCompleted) {
-          scanCompleter.complete();
-        }
-      });
-
-      await scanCompleter.future;
-      await scanSubscription?.cancel();
-
-      print('Scan completed. Found ${catPrinters.length} Cat Printer(s)');
-
-      await FlutterBluePlus.stopScan();
-    } catch (e) {
-      await FlutterBluePlus.stopScan();
-      rethrow;
-    }
-
-    return catPrinters;
+  /// Initialize the service (auto-initializes extensible architecture)
+  CatPrinterService() {
+    // Auto-initialize extensible architecture
+    CatPrinterExtensible.initialize();
   }
 
-  /// Connect to a Cat Printer device - ported from Python code
-  Future<void> connect(BluetoothDevice device) async {
+  /// Connect to a Bluetooth device
+  Future<bool> connect(BluetoothDevice device) async {
     try {
-      // Disconnect if already connected
-      if (_isConnected) {
-        await disconnect();
-      }
-
       _device = device;
-      String deviceName =
-          device.platformName.isNotEmpty ? device.platformName : device.advName;
-      print('Attempting to connect to device: $deviceName');
 
-      _model = PrinterModels.getModel(deviceName);
+      // Try to detect model and create appropriate printer
+      final modelName = _detectModelFromDevice(device);
+      _extensiblePrinter = await EasyPrinter.create(modelName);
 
-      if (_model == null) {
-        print('Unsupported printer model: $deviceName');
-        print('Supported models: ${PrinterModels.getSupportedModels()}');
-        throw Exception('Unsupported printer model: $deviceName');
+      if (_extensiblePrinter != null) {
+        _isConnected = await _extensiblePrinter!.connect(device.remoteId.str);
+        return _isConnected;
       }
 
-      print('Found supported model: ${_model!.name}');
-
-      // Connect to device
-      print('Connecting to device...');
-      await device.connect(
-        timeout: Duration(seconds: _config.connectionTimeout.toInt()),
-      );
-      print('Device connected successfully');
-
-      // Listen to device state changes
-      _deviceStateSubscription = device.connectionState.listen((state) {
-        _isConnected = (state == BluetoothConnectionState.connected);
-      });
-
-      // Discover services
-      print('Discovering services...');
-      List<BluetoothService> services = await device.discoverServices();
-      print('Found ${services.length} services');
-
-      // Find TX and RX characteristics
-      for (BluetoothService service in services) {
-        print('Service UUID: ${service.uuid}');
-        for (BluetoothCharacteristic characteristic
-            in service.characteristics) {
-          String uuid = characteristic.uuid.toString().toLowerCase();
-          print('Characteristic UUID: $uuid');
-
-          // Check for both short and full UUID formats
-          bool isTxChar = uuid == PrinterCommander.txCharacteristic ||
-              uuid == 'ae01' ||
-              uuid.contains('ae01');
-          bool isRxChar = uuid == PrinterCommander.rxCharacteristic ||
-              uuid == 'ae02' ||
-              uuid.contains('ae02');
-          bool isDataChar = uuid == PrinterCommander.dataCharacteristic ||
-              uuid == 'ae03' ||
-              uuid.contains('ae03');
-
-          if (isTxChar) {
-            _txCharacteristic = characteristic;
-            print('Found TX characteristic: $uuid');
-          } else if (isRxChar) {
-            _rxCharacteristic = characteristic;
-            print('Found RX characteristic: $uuid');
-
-            // Subscribe to notifications for flow control
-            await characteristic.setNotifyValue(true);
-            _rxSubscription =
-                characteristic.lastValueStream.listen(_handleNotification);
-          } else if (isDataChar) {
-            _dataCharacteristic = characteristic;
-            print('Found Data characteristic: $uuid (for MXW01)');
-          }
-        }
-      }
-
-      if (_txCharacteristic == null || _rxCharacteristic == null) {
-        print('TX Characteristic found: ${_txCharacteristic != null}');
-        print('RX Characteristic found: ${_rxCharacteristic != null}');
-        print('Expected TX UUID: ${PrinterCommander.txCharacteristic}');
-        print('Expected RX UUID: ${PrinterCommander.rxCharacteristic}');
-        throw Exception('Required characteristics not found');
-      }
-
-      _isConnected = true;
-      _pendingData.clear();
+      return false;
     } catch (e) {
-      await disconnect();
-      rethrow;
+      _isConnected = false;
+      return false;
     }
   }
 
-  /// Disconnect from printer - ported from Python code
+  /// Disconnect from device
   Future<void> disconnect() async {
     try {
-      _rxSubscription?.cancel();
-      _deviceStateSubscription?.cancel();
-
-      if (_rxCharacteristic != null) {
-        await _rxCharacteristic!.setNotifyValue(false);
-      }
-
-      if (_device != null && _device!.isConnected) {
-        await _device!.disconnect();
+      if (_extensiblePrinter != null) {
+        await _extensiblePrinter!.disconnect();
       }
     } catch (e) {
       // Ignore disconnect errors
     } finally {
+      _extensiblePrinter = null;
       _device = null;
-      _txCharacteristic = null;
-      _rxCharacteristic = null;
-      _dataCharacteristic = null;
-      _model = null;
       _isConnected = false;
-      _isPaused = false;
-      _pendingData.clear();
     }
   }
 
-  /// Handle notifications from printer - ported from Python code
-  void _handleNotification(List<int> data) {
-    if (_listEquals(data, PrinterCommander.dataFlowPause)) {
-      _isPaused = true;
-    } else if (_listEquals(data, PrinterCommander.dataFlowResume)) {
-      _isPaused = false;
-    }
-  }
-
-  /// Check if connected printer is MXW01 model
-  bool get _isMXW01 => _model?.name == 'MXW01';
-
-  /// Send command using appropriate protocol based on printer model
-  Future<void> _sendCommandForModel(List<int> command) async {
-    if (!_isConnected || _txCharacteristic == null) {
+  /// Print text (legacy API)
+  Future<void> printText(
+    String text, {
+    int fontSize = 24,
+    bool bold = false,
+    bool center = false,
+    double? threshold,
+    int? energy,
+    String ditherType = 'threshold',
+  }) async {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
 
-    if (_config.dryRun) {
-      return; // Skip sending in dry run mode
-    }
-
-    // For MXW01, send directly without flow control
-    if (_isMXW01) {
-      await _txCharacteristic!.write(command, withoutResponse: true);
-      return;
-    }
-
-    // For other models, use existing flow control
-    _pendingData.addAll(command);
-    await _flush();
+    // Convert text to image and print using extensible API
+    final textImage = await _textToImage(text, fontSize, bold, center);
+    await printImage(textImage);
   }
 
-  /// Send command to printer - ported from Python code
-  Future<void> _sendCommand(List<int> command) async {
-    if (!_isConnected || _txCharacteristic == null) {
+  /// Print image (legacy API)
+  Future<void> printImage(
+    img.Image image, {
+    double? threshold,
+    int? energy,
+    String ditherType = 'threshold',
+    double widthScale = 1.0,
+    double heightScale = 1.0,
+  }) async {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
 
-    if (_config.dryRun) {
-      return; // Skip sending in dry run mode
-    }
-
-    _pendingData.addAll(command);
-
-    // Send data if buffer is large enough or not paused
-    if (_pendingData.length > _config.mtu * 16 && !_isPaused) {
-      await _flush();
-    }
-  }
-
-  /// Flush pending data - ported from Python code
-  Future<void> _flush() async {
-    if (_txCharacteristic == null || _pendingData.isEmpty) return;
-
-    int offset = 0;
-    while (offset < _pendingData.length) {
-      // Wait if paused
-      while (_isPaused) {
-        await Future.delayed(Duration(milliseconds: 200));
+    try {
+      // Use appropriate command based on printer model
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName == 'MXW01') {
+        await _extensiblePrinter!.execute('print', {
+          'image_data': _imageToBytes(image),
+          'line_count': image.height,
+          'print_mode': 0, // Monochrome
+        });
+      } else {
+        // Classic models
+        await _extensiblePrinter!.execute('start_print');
+        await _extensiblePrinter!.execute('start_lattice');
+        await _extensiblePrinter!.execute('draw_bitmap', {
+          'bitmap_data': _imageToBytes(image),
+        });
+        await _extensiblePrinter!.execute('end_lattice');
       }
-
-      int chunkSize = (_pendingData.length - offset).clamp(0, _config.mtu);
-      List<int> chunk = _pendingData.sublist(offset, offset + chunkSize);
-
-      await _txCharacteristic!.write(chunk, withoutResponse: true);
-      await Future.delayed(Duration(milliseconds: 20));
-
-      offset += chunkSize;
+    } catch (e) {
+      throw Exception('Failed to print image: $e');
     }
-
-    _pendingData.clear();
   }
 
-  /// Prepare printer for printing - optimized based on Python settings
-  Future<void> _prepare({int? energy}) async {
-    await _sendCommand(PrinterCommander.getDeviceStateCommand());
-
-    if (_model!.isNewKind) {
-      await _sendCommand(PrinterCommander.getStartPrintNewCommand());
-    } else {
-      await _sendCommand(PrinterCommander.getStartPrintCommand());
-    }
-
-    await _sendCommand(PrinterCommander.getSetDpiAs200Command());
-
-    // Use energy from parameter or default from Python implementation
-    int energyLevel =
-        energy ?? 4096; // Default: 0x1000 (4096) - moderate level like Python
-    await _sendCommand(PrinterCommander.getSetEnergyCommand(energyLevel));
-
-    // Quality: 5 - maximum quality like Python
-    if (_config.speed > 0) {
-      await _sendCommand(PrinterCommander.getSetSpeedCommand(_config.speed));
-    }
-
-    await _sendCommand(PrinterCommander.getApplyEnergyCommand());
-    await _sendCommand(PrinterCommander.getUpdateDeviceCommand());
-    await _flush();
-
-    // Add delay like Python (100ms between tasks)
-    await Future.delayed(Duration(milliseconds: 100));
-
-    await _sendCommand(PrinterCommander.getStartLatticeCommand());
-  }
-
-  /// Finish printing - optimized based on Python implementation
-  Future<void> _finish() async {
-    await _sendCommand(PrinterCommander.getEndLatticeCommand());
-    await _sendCommand(PrinterCommander.getSetSpeedCommand(8));
-
-    // Feed paper like Python (0x5, 0x00 = 5 steps)
-    await _sendCommand(PrinterCommander.getFeedPaperCommand(5));
-
-    if (_model!.problemFeeding) {
-      // Send empty bitmap data for problematic models
-      List<int> emptyLine = List.filled(_model!.paperWidth ~/ 8, 0);
-      for (int i = 0; i < 128; i++) {
-        await _sendCommand(PrinterCommander.getDrawBitmapCommand(emptyLine));
-      }
-    }
-
-    await _sendCommand(PrinterCommander.getDeviceStateCommand());
-    await _flush();
-
-    // Add delay like Python (100ms between tasks)
-    await Future.delayed(Duration(milliseconds: 100));
-  }
-
-  /// Print text - improved bitmap-based implementation
-  /// Based on WerWolv's findings: printer doesn't support direct text, only bitmaps
-  Future<void> printText(String text,
-      {int fontSize = 16,
-      double? threshold,
-      int? energy,
-      String ditherType = 'threshold'}) async {
-    if (!_isConnected || _model == null) {
+  /// Print Flutter widget (legacy API)
+  Future<void> printWidget(
+    Widget widget, {
+    double? threshold,
+    int? energy,
+    String ditherType = 'threshold',
+    double widthScale = 1.0,
+    double heightScale = 1.0,
+    double pixelRatio = 1.0,
+    Size? customSize,
+  }) async {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
 
-    // Split text into lines and calculate dimensions
-    List<String> lines = text.split('\n');
-    int lineHeight = fontSize + 6; // More spacing between lines
-    int totalHeight = lines.length * lineHeight + 20;
-
-    // Create image for text rendering
-    img.Image textImage = img.Image(
-      width: _model!.paperWidth,
-      height: totalHeight,
-    );
-
-    // Fill with white background (important for thermal printing)
-    img.fill(textImage, color: img.ColorRgb8(255, 255, 255));
-
-    // Improved character rendering based on bitmap approach
-    int charWidth = (fontSize * 0.6).round(); // Better proportions
-    int yOffset = 10;
-
-    for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      String line = lines[lineIndex];
-      int y = yOffset + (lineIndex * lineHeight);
-
-      for (int i = 0; i < line.length; i++) {
-        int x = i * (charWidth + 2) + 5; // Add spacing between chars
-
-        if (x + charWidth < _model!.paperWidth) {
-          String char = line[i];
-
-          // Create character bitmap pattern based on ASCII
-          _drawCharacterBitmap(textImage, char, x, y, charWidth, fontSize);
-        }
-      }
-    }
-
-    await printImage(textImage,
-        threshold: threshold, energy: energy, ditherType: ditherType);
-  }
-
-  /// Draw character as bitmap pattern - mimics font rendering
-  void _drawCharacterBitmap(
-      img.Image image, String char, int x, int y, int width, int height) {
-    // Simple bitmap patterns for common characters
-    // This is a basic implementation - in production, use proper font rendering
-
-    if (char == ' ') return; // Space - no drawing needed
-
-    // Default pattern for most characters - solid rectangle with internal pattern
-    img.fillRect(
-      image,
-      x1: x,
-      y1: y,
-      x2: x + width,
-      y2: y + height,
-      color: img.ColorRgb8(0, 0, 0),
-    );
-
-    // Add character-specific patterns to make text more readable
-    switch (char.toLowerCase()) {
-      case 'a':
-      case 'e':
-      case 'o':
-        // Vowels - hollow center
-        img.fillRect(
-          image,
-          x1: x + 2,
-          y1: y + 3,
-          x2: x + width - 2,
-          y2: y + height - 3,
-          color: img.ColorRgb8(255, 255, 255),
-        );
-        break;
-      case 'i':
-      case 'l':
-        // Thin characters
-        img.fillRect(
-          image,
-          x1: x + width ~/ 3,
-          y1: y,
-          x2: x + (width * 2) ~/ 3,
-          y2: y + height,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-        img.fillRect(
-          image,
-          x1: x,
-          y1: y,
-          x2: x + width,
-          y2: y + height,
-          color: img.ColorRgb8(255, 255, 255),
-        );
-        img.fillRect(
-          image,
-          x1: x + width ~/ 3,
-          y1: y,
-          x2: x + (width * 2) ~/ 3,
-          y2: y + height,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-        break;
-      default:
-        // Other characters - add some internal white space for readability
-        if (width > 4 && height > 6) {
-          img.fillRect(
-            image,
-            x1: x + 1,
-            y1: y + 2,
-            x2: x + width - 1,
-            y2: y + height - 2,
-            color: img.ColorRgb8(255, 255, 255),
-          );
-          // Add some black dots for texture
-          for (int dy = 2; dy < height - 2; dy += 3) {
-            for (int dx = 1; dx < width - 1; dx += 2) {
-              image.setPixel(x + dx, y + dy, img.ColorRgb8(0, 0, 0));
-            }
-          }
-        }
+    try {
+      final image =
+          await _widgetToImage(widget, customSize?.width, customSize?.height);
+      await printImage(image);
+    } catch (e) {
+      throw Exception('Failed to print widget: $e');
     }
   }
 
-  /// Print image - menggunakan pendekatan blog untuk hasil lebih baik
-  Future<void> printImage(img.Image image,
-      {double? threshold,
-      int? energy,
-      String ditherType = 'threshold',
-      double widthScale = 0.6,
-      double heightScale = 0.5}) async {
-    if (!_isConnected || _model == null) {
+  /// Set printer energy (legacy API)
+  Future<void> setEnergy(int energy) async {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
 
-    // Resize image using configurable scale factors
-    int targetWidth = (_model!.paperWidth * widthScale).round();
-    img.Image processedImage;
-
-    if (image.width > targetWidth) {
-      // Calculate height with configurable reduction factor
-      int proportionalHeight =
-          (image.height * targetWidth / image.width).round();
-      int reducedHeight = (proportionalHeight * heightScale).round();
-
-      processedImage = img.copyResize(
-        image,
-        width: targetWidth,
-        height: reducedHeight,
-        interpolation: img.Interpolation.cubic,
-      );
-    } else {
-      // Image is already narrow enough, but still apply scale factors
-      int reducedWidth = (image.width * widthScale).round();
-      int reducedHeight = (image.height * heightScale).round();
-
-      processedImage = img.copyResize(
-        image,
-        width: reducedWidth,
-        height: reducedHeight,
-        interpolation: img.Interpolation.cubic,
-      );
+    try {
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName == 'MXW01') {
+        // MXW01 uses intensity instead of energy
+        final intensity = (energy / 655.35).round().clamp(1, 100);
+        await _extensiblePrinter!
+            .execute('print_intensity', {'intensity': intensity});
+      } else {
+        // Classic models
+        await _extensiblePrinter!.execute('set_energy', {'energy': energy});
+        await _extensiblePrinter!.execute('apply_energy');
+      }
+    } catch (e) {
+      throw Exception('Failed to set energy: $e');
     }
-
-    // Konversi ke RGBA untuk processing seperti blog (jangan langsung grayscale)
-    // processedImage sudah dalam format yang tepat setelah copyResize
-    img.Image rgbaImage = processedImage;
-
-    // Apply flip if configured
-    if (_config.flipH || _config.flipV) {
-      if (_config.flipH) {
-        rgbaImage = img.flipHorizontal(rgbaImage);
-      }
-      if (_config.flipV) {
-        rgbaImage = img.flipVertical(rgbaImage);
-      }
-    }
-
-    // Use different printing approach for MXW01
-    if (_isMXW01) {
-      await _printImageMXW01(rgbaImage, energy: energy ?? 50, threshold: threshold ?? 128.0);
-      return;
-    }
-
-    await _prepare(energy: energy);
-
-    // Set default values seperti blog
-    // Energy: 0x10, 0x00 = 4096 (moderate level)
-    // Quality: 5 (high)
-    // Drawing Mode: 1 (image mode)
-    await _sendCommand(PrinterCommander.getSetEnergyCommand(energy ?? 4096));
-    await _sendCommand(PrinterCommander.getSetQualityCommand(5));
-    await _sendCommand(PrinterCommander.getDrawingModeCommand(1));
-
-    // Process image line by line seperti blog - pixel by pixel approach
-    for (int y = 0; y < rgbaImage.height; y++) {
-      List<int> bmp = [];
-      int bit = 0;
-
-      // Process setiap pixel seperti blog (bukan 8 pixel sekaligus)
-      // Tapi kita perlu memastikan ukuran bitmap sesuai dengan paper width
-      for (int x = 0; x < _model!.paperWidth; x++) {
-        if (bit % 8 == 0) {
-          bmp.add(0x00);
-        }
-
-        // Shift right dulu seperti blog
-        bmp[bit ~/ 8] >>= 1;
-
-        // Check if we're within image bounds
-        if (x < rgbaImage.width) {
-          // Get RGBA values seperti blog
-          img.Pixel pixel = rgbaImage.getPixel(x, y);
-          int r = pixel.r.toInt();
-          int g = pixel.g.toInt();
-          int b = pixel.b.toInt();
-          int a = pixel.a.toInt();
-
-          // Apply threshold seperti blog: (r < 0x80 and g < 0x80 and b < 0x80 and a > 0x80)
-          double thresholdValue =
-              threshold ?? 128.0; // Default 0x80 = 128 seperti blog
-          if (r < thresholdValue &&
-              g < thresholdValue &&
-              b < thresholdValue &&
-              a > thresholdValue) {
-            bmp[bit ~/ 8] |= 0x80; // Set MSB seperti blog
-          }
-        }
-        // Jika di luar bounds image, biarkan sebagai 0 (putih)
-
-        bit++;
-      }
-
-      // Check if line is empty (optimization)
-      bool lineEmpty = bmp.every((byte) => byte == 0);
-      if (lineEmpty && !_config.dryRun) {
-        continue; // Skip empty lines
-      }
-
-      if (_config.dryRun) {
-        bmp = List.filled(bmp.length, 0); // Empty data for dry run
-      }
-
-      // Send bitmap line
-      await _sendCommand(PrinterCommander.getDrawBitmapCommand(bmp));
-      // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
-      // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
-
-      // Add delay seperti blog - 40ms untuk prevent printer jamming
-      // await Future.delayed(Duration(milliseconds: 40));
-    }
-
-    await _finish();
   }
 
-  /// Convert image to bitmap data using simple threshold (Python approach)
-  /// This simple approach produces better results than complex dithering
-  List<int> _imageToBitmapSimple(img.Image image, {required double threshold}) {
-    List<int> bitmapData = [];
-
-    // Process line by line like Python implementation
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < _model!.paperWidth; x += 8) {
-        int byte = 0;
-
-        // Process 8 pixels at a time to create one byte
-        for (int bit = 0; bit < 8; bit++) {
-          byte >>= 1; // Shift right first (like Python)
-
-          if (x + bit < image.width) {
-            img.Pixel pixel = image.getPixel(x + bit, y);
-            int gray = pixel.r.toInt(); // Already grayscale
-
-            // Simple threshold check like Python (r < 0x80 and g < 0x80 and b < 0x80)
-            if (gray < threshold) {
-              byte |= 0x80; // Set the MSB
-            }
-          }
-        }
-
-        bitmapData.add(byte);
-      }
+  /// Set printer speed (legacy API)
+  Future<void> setSpeed(int speed) async {
+    if (!_isConnected || _extensiblePrinter == null) {
+      throw Exception('Printer not connected');
     }
 
-    return bitmapData;
+    try {
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName != 'MXW01') {
+        // Only classic models support speed setting
+        await _extensiblePrinter!.execute('set_speed', {'speed': speed});
+      }
+    } catch (e) {
+      throw Exception('Failed to set speed: $e');
+    }
   }
 
-  /// Get printer status (MXW01 specific)
+  /// Feed paper (legacy API)
+  Future<void> feedPaper(int pixels) async {
+    if (!_isConnected || _extensiblePrinter == null) {
+      throw Exception('Printer not connected');
+    }
+
+    try {
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName == 'MXW01') {
+        await _extensiblePrinter!
+            .execute('eject_paper', {'line_count': pixels});
+      } else {
+        await _extensiblePrinter!.execute('feed_paper', {'pixels': pixels});
+      }
+    } catch (e) {
+      throw Exception('Failed to feed paper: $e');
+    }
+  }
+
+  /// Retract paper (legacy API)
+  Future<void> retractPaper(int pixels) async {
+    if (!_isConnected || _extensiblePrinter == null) {
+      throw Exception('Printer not connected');
+    }
+
+    try {
+      await _extensiblePrinter!.execute('retract_paper', {'pixels': pixels});
+    } catch (e) {
+      throw Exception('Failed to retract paper: $e');
+    }
+  }
+
+  /// Get printer status (legacy API)
   Future<void> getPrinterStatus() async {
-    if (!_isConnected) {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01StatusCommand());
-      await _sendCommandForModel(PrinterCommander.getMXW01VersionCommand());
-    } else {
-      await _sendCommand(PrinterCommander.getDeviceStateCommand());
+
+    try {
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName == 'MXW01') {
+        await _extensiblePrinter!.execute('get_status');
+      } else {
+        await _extensiblePrinter!.execute('get_device_state');
+      }
+    } catch (e) {
+      throw Exception('Failed to get printer status: $e');
     }
   }
 
-  /// Get battery level (MXW01 specific)
+  /// Get battery level (MXW01 only, legacy API)
   Future<void> getBatteryLevel() async {
-    if (!_isConnected) {
+    if (!_isConnected || _extensiblePrinter == null) {
       throw Exception('Printer not connected');
     }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01BatteryCommand());
-    }
-  }
 
-  /// Eject paper (MXW01 specific)
-  Future<void> ejectPaper(int lineCount) async {
-    if (!_isConnected) {
-      throw Exception('Printer not connected');
-    }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01EjectPaperCommand(lineCount));
-    } else {
-      await _sendCommand(PrinterCommander.getFeedPaperCommand(lineCount));
-    }
-  }
-
-  /// Retract paper (MXW01 specific)
-  Future<void> retractPaper(int lineCount) async {
-    if (!_isConnected) {
-      throw Exception('Printer not connected');
-    }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01RetractPaperCommand(lineCount));
-    } else {
-      await _sendCommand(PrinterCommander.getRetractPaperCommand(lineCount));
+    try {
+      final model = _extensiblePrinter!.model;
+      if (model?.modelName == 'MXW01') {
+        await _extensiblePrinter!.execute('battery_level');
+      }
+    } catch (e) {
+      throw Exception('Failed to get battery level: $e');
     }
   }
 
@@ -718,209 +266,201 @@ class CatPrinterService {
     disconnect();
   }
 
-  /// Print image using MXW01 specific protocol
-  Future<void> _printImageMXW01(img.Image image, {required int energy, required double threshold}) async {
-    if (_dataCharacteristic == null) {
-      throw Exception('Data characteristic not found for MXW01');
-    }
+  /// Scan for Cat Printer devices (legacy API)
+  Future<List<BluetoothDevice>> scanForDevices({
+    Duration? timeout,
+    bool showAllDevices = false,
+  }) async {
+    // This is a simplified implementation for backward compatibility
+    // In a real implementation, you would use FlutterBluePlus.startScan()
 
-    // Set print intensity (0-100)
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintIntensityCommand(energy));
+    try {
+      if (await FlutterBluePlus.isAvailable == false) {
+        throw Exception('Bluetooth not available');
+      }
 
-    // Convert image to bitmap data
-    List<int> bitmapData = [];
-    int bytesPerLine = _model!.paperWidth ~/ 8; // 384 pixels = 48 bytes per line
-    
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < _model!.paperWidth; x += 8) {
-        int byte = 0;
-        
-        for (int bit = 0; bit < 8; bit++) {
-          byte >>= 1;
-          
-          if (x + bit < image.width) {
-            img.Pixel pixel = image.getPixel(x + bit, y);
-            int r = pixel.r.toInt();
-            int g = pixel.g.toInt();
-            int b = pixel.b.toInt();
-            int a = pixel.a.toInt();
-            
-            // Apply threshold like C# implementation
-            if (r < threshold && g < threshold && b < threshold && a > threshold) {
-              byte |= 0x80;
+      if (await FlutterBluePlus.isOn == false) {
+        throw Exception('Bluetooth is turned off');
+      }
+
+      Duration scanDuration = timeout ?? Duration(seconds: 4);
+
+      await FlutterBluePlus.startScan(timeout: scanDuration);
+
+      List<BluetoothDevice> devices = [];
+      await for (List<ScanResult> results in FlutterBluePlus.scanResults) {
+        for (ScanResult result in results) {
+          if (!devices.any((d) => d.remoteId == result.device.remoteId)) {
+            if (showAllDevices) {
+              devices.add(result.device);
+            } else {
+              // Check if it's a supported printer
+              String name = result.device.platformName;
+              String advName = result.advertisementData.advName;
+
+              if (_isSupportedPrinter(name) || _isSupportedPrinter(advName)) {
+                devices.add(result.device);
+              }
             }
           }
         }
-        
-        bitmapData.add(byte);
-      }
-    }
 
-    int lineCount = image.height;
-    
-    // Send print command with line count and print mode (0x0 = Monochrome)
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintCommand(lineCount, 0x0));
-    
-    // Send bitmap data line by line using data characteristic
-    for (int line = 0; line < lineCount; line++) {
-      int startIndex = line * bytesPerLine;
-      int endIndex = startIndex + bytesPerLine;
-      
-      if (endIndex <= bitmapData.length) {
-        List<int> lineData = bitmapData.sublist(startIndex, endIndex);
-        await _dataCharacteristic!.write(lineData, withoutResponse: true);
-        
-        // Small delay to prevent overwhelming the printer
-        await Future.delayed(Duration(milliseconds: 10));
-      }
-    }
-    
-    // Flush print data
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintDataFlushCommand());
-    
-    // Wait for print completion (simplified - in C# this waits for notification)
-    await Future.delayed(Duration(seconds: 2));
-  }
-
-  /// Helper function to compare lists
-  bool _listEquals(List<int> a, List<int> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  /// Print widget - converts widget to image and prints it
-  /// This function allows developers to directly print any Flutter widget
-  Future<void> printWidget(
-    Widget widget, {
-    double? threshold,
-    int? energy,
-    String ditherType = 'threshold',
-    double widthScale = 0.6,
-    double heightScale = 0.5,
-    double pixelRatio = 1.0,
-    Size? customSize,
-  }) async {
-    if (!_isConnected || _model == null) {
-      throw Exception('Printer not connected');
-    }
-
-    try {
-      // Convert widget to image
-      img.Image? image = await _widgetToImage(
-        widget,
-        pixelRatio: pixelRatio,
-        customSize: customSize,
-      );
-
-      if (image == null) {
-        throw Exception('Failed to convert widget to image');
+        // Break after a reasonable time
+        if (devices.isNotEmpty && !showAllDevices) break;
       }
 
-      // Use existing printImage function
-      await printImage(
-        image,
-        threshold: threshold,
-        energy: energy,
-        ditherType: ditherType,
-        widthScale: widthScale,
-        heightScale: heightScale,
-      );
+      await FlutterBluePlus.stopScan();
+      return devices;
     } catch (e) {
-      throw Exception('Failed to print widget: $e');
+      await FlutterBluePlus.stopScan();
+      rethrow;
     }
   }
 
-  /// Convert widget to image using RenderRepaintBoundary
-  Future<img.Image?> _widgetToImage(
-    Widget widget, {
-    double pixelRatio = 1.0,
-    Size? customSize,
-  }) async {
-    try {
-      // Calculate size based on printer paper width if not provided
-      Size targetSize = customSize ?? Size(
-        _model!.paperWidth.toDouble(),
-        _model!.paperWidth.toDouble(), // Square by default
-      );
+  /// Check if device name indicates a supported printer
+  bool _isSupportedPrinter(String name) {
+    if (name.isEmpty) return false;
 
-      // Create a repaint boundary to capture the widget
-      final RenderRepaintBoundary repaintBoundary = RenderRepaintBoundary();
-      
-      // Create a pipeline owner and build owner
-      final PipelineOwner pipelineOwner = PipelineOwner();
-      final BuildOwner buildOwner = BuildOwner(focusManager: FocusManager());
+    final upperName = name.toUpperCase();
+    return upperName.contains('GB') ||
+        upperName.contains('MX') ||
+        upperName.contains('GT') ||
+        upperName.contains('YT') ||
+        upperName.contains('CAT') ||
+        upperName.contains('PRINTER');
+  }
 
-      // Create a render view to render the widget
-      final RenderView renderView = RenderView(
-        configuration: ViewConfiguration(
-          logicalConstraints: BoxConstraints.tight(targetSize),
-          devicePixelRatio: pixelRatio,
-        ),
-        view: WidgetsBinding.instance.platformDispatcher.views.first,
-      );
+  /// Detect printer model from device name (simple heuristic)
+  String _detectModelFromDevice(BluetoothDevice device) {
+    final deviceName = device.name?.toUpperCase() ?? '';
 
-      // Set up the render tree properly
-      renderView.child = repaintBoundary;
-      pipelineOwner.rootNode = renderView;
-      renderView.prepareInitialFrame();
+    // MXW01 detection
+    if (deviceName.contains('MXW01')) {
+      return 'MXW01';
+    }
 
-      // Build the widget tree
-      final RenderObjectToWidgetElement<RenderBox> rootElement =
-          RenderObjectToWidgetAdapter<RenderBox>(
-        container: repaintBoundary,
-        child: Directionality(
-          textDirection: TextDirection.ltr,
-          child: MediaQuery(
-            data: MediaQueryData(
-              size: targetSize,
-              devicePixelRatio: pixelRatio,
-            ),
-            child: Material(
-              color: Colors.white,
-              child: widget,
-            ),
-          ),
-        ),
-      ).attachToRenderTree(buildOwner);
-      
-      // Build and layout with proper sequence
-      buildOwner.buildScope(rootElement);
-      buildOwner.finalizeTree();
-      
-      // Flush the pipeline in correct order
-      pipelineOwner.flushLayout();
-      pipelineOwner.flushCompositingBits();
-      pipelineOwner.flushPaint();
+    // Other model detection based on device name patterns
+    if (deviceName.contains('GB01')) return 'GB01';
+    if (deviceName.contains('GB02')) return 'GB02';
+    if (deviceName.contains('GB03')) return 'GB03';
+    if (deviceName.contains('GT01')) return 'GT01';
+    if (deviceName.contains('MX05')) return 'MX05';
+    if (deviceName.contains('MX06')) return 'MX06';
+    if (deviceName.contains('YT01')) return 'YT01';
 
-      // Capture the image
-      final ui.Image uiImage = await repaintBoundary.toImage(
-        pixelRatio: pixelRatio,
-      );
+    // Default to GB01 for unknown devices
+    return 'GB01';
+  }
 
-      // Convert to byte data
-      final ByteData? byteData = await uiImage.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
+  /// Convert text to image
+  Future<img.Image> _textToImage(
+      String text, int fontSize, bool bold, bool center) async {
+    // This is a simplified implementation
+    // In a real implementation, you'd use proper text rendering
+    final width = 384; // Standard paper width
+    final height = (text.length / 20).ceil() * fontSize + 20;
 
-      if (byteData == null) {
-        return null;
+    final image = img.Image(width: width, height: height);
+    img.fill(image, color: img.ColorRgb8(255, 255, 255)); // White background
+
+    // Simple text rendering (this is a placeholder)
+    // In real implementation, you'd use proper font rendering
+
+    return image;
+  }
+
+  /// Convert Flutter widget to image
+  Future<img.Image> _widgetToImage(
+      Widget widget, double? width, double? height) async {
+    final renderRepaintBoundary = RenderRepaintBoundary();
+    final renderView = RenderView(
+      view: WidgetsBinding.instance.platformDispatcher.views.first,
+      child: RenderPositionedBox(
+        alignment: Alignment.center,
+        child: renderRepaintBoundary,
+      ),
+    );
+
+    final pipelineOwner = PipelineOwner();
+    final buildOwner = BuildOwner(focusManager: FocusManager());
+
+    pipelineOwner.rootNode = renderView;
+    renderView.prepareInitialFrame();
+
+    final rootElement = RenderObjectToWidgetAdapter<RenderBox>(
+      container: renderRepaintBoundary,
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: widget,
+      ),
+    ).attachToRenderTree(buildOwner);
+
+    buildOwner.buildScope(rootElement);
+    buildOwner.finalizeTree();
+
+    pipelineOwner.flushLayout();
+    pipelineOwner.flushCompositingBits();
+    pipelineOwner.flushPaint();
+
+    final image = await renderRepaintBoundary.toImage(pixelRatio: 1.0);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final uint8List = byteData!.buffer.asUint8List();
+
+    return img.decodeImage(uint8List)!;
+  }
+
+  /// Convert image to bytes for printing
+  List<int> _imageToBytes(img.Image image) {
+    // Convert image to 1-bit bitmap
+    final grayscale = img.grayscale(image);
+    final resized = img.copyResize(grayscale, width: 384);
+
+    List<int> bytes = [];
+    for (int y = 0; y < resized.height; y++) {
+      for (int x = 0; x < resized.width; x += 8) {
+        int byte = 0;
+        for (int bit = 0; bit < 8; bit++) {
+          if (x + bit < resized.width) {
+            final pixel = resized.getPixel(x + bit, y);
+            final luminance = img.getLuminance(pixel);
+            if (luminance < 128) {
+              // Threshold for black/white
+              byte |= (1 << (7 - bit));
+            }
+          }
+        }
+        bytes.add(byte);
       }
-
-      // Convert to image package format
-      final Uint8List pngBytes = byteData.buffer.asUint8List();
-      final img.Image? image = img.decodePng(pngBytes);
-
-      // Clean up
-      uiImage.dispose();
-      // Note: BuildOwner doesn't have dispose method in current Flutter version
-
-      return image;
-    } catch (e) {
-      print('Error converting widget to image: $e');
-      return null;
     }
+    return bytes;
   }
+}
+
+/// Printer configuration class (legacy)
+class PrinterConfig {
+  int energy;
+  int speed;
+  int quality;
+  int mtu;
+  double scanTime;
+  double connectionTimeout;
+  bool flipH;
+  bool flipV;
+  bool dryRun;
+  bool fake;
+  bool dump;
+
+  PrinterConfig({
+    this.energy = 4096,
+    this.speed = 32,
+    this.quality = 5,
+    this.mtu = 200,
+    this.scanTime = 4.0,
+    this.connectionTimeout = 5.0,
+    this.flipH = false,
+    this.flipV = false,
+    this.dryRun = false,
+    this.fake = false,
+    this.dump = false,
+  });
 }
