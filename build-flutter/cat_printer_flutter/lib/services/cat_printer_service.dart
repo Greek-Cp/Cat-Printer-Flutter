@@ -38,20 +38,60 @@ class CatPrinterService {
   /// Connect to a Bluetooth device
   Future<bool> connect(BluetoothDevice device) async {
     try {
+      // Disconnect if already connected
+      if (_isConnected) {
+        await disconnect();
+      }
+
       _device = device;
+      String deviceName = device.platformName.isNotEmpty
+          ? device.platformName
+          : (device.name ?? 'Unknown');
+
+      print('Attempting to connect to device: $deviceName');
 
       // Try to detect model and create appropriate printer
       final modelName = _detectModelFromDevice(device);
-      _extensiblePrinter = await EasyPrinter.create(modelName);
+      print('Detected printer model: $modelName');
 
-      if (_extensiblePrinter != null) {
-        _isConnected = await _extensiblePrinter!.connect(device.remoteId.str);
-        return _isConnected;
+      // For now, use a simplified connection approach
+      // In a real implementation, this would connect to the actual device
+      try {
+        // Connect to device using FlutterBluePlus
+        print('Connecting to device...');
+        await device.connect(
+          timeout: Duration(seconds: _config.connectionTimeout.toInt()),
+        );
+        print('Device connected successfully');
+
+        // Create extensible printer instance
+        _extensiblePrinter = await EasyPrinter.create(modelName);
+
+        if (_extensiblePrinter != null) {
+          // For MXW01, we might need special initialization
+          if (modelName == 'MXW01') {
+            print('Initializing MXW01 printer...');
+            // Add any MXW01-specific initialization here
+          }
+
+          _isConnected = true;
+          print('Printer service connected successfully');
+          return true;
+        }
+
+        print('Failed to create extensible printer instance');
+        await device.disconnect();
+        return false;
+      } catch (e) {
+        print('Connection error: $e');
+        await device.disconnect();
+        throw e;
       }
-
-      return false;
     } catch (e) {
+      print('Connect method error: $e');
       _isConnected = false;
+      _device = null;
+      _extensiblePrinter = null;
       return false;
     }
   }
@@ -59,15 +99,25 @@ class CatPrinterService {
   /// Disconnect from device
   Future<void> disconnect() async {
     try {
+      print('Disconnecting from printer...');
+
+      if (_device != null && _device!.isConnected) {
+        await _device!.disconnect();
+        print('Device disconnected successfully');
+      }
+
       if (_extensiblePrinter != null) {
-        await _extensiblePrinter!.disconnect();
+        // Any extensible printer cleanup if needed
+        print('Extensible printer cleaned up');
       }
     } catch (e) {
+      print('Disconnect error (ignored): $e');
       // Ignore disconnect errors
     } finally {
       _extensiblePrinter = null;
       _device = null;
       _isConnected = false;
+      print('Printer service disconnected');
     }
   }
 
@@ -271,50 +321,82 @@ class CatPrinterService {
     Duration? timeout,
     bool showAllDevices = false,
   }) async {
-    // This is a simplified implementation for backward compatibility
-    // In a real implementation, you would use FlutterBluePlus.startScan()
+    List<BluetoothDevice> catPrinters = [];
 
     try {
+      // Check if Bluetooth is available
       if (await FlutterBluePlus.isAvailable == false) {
         throw Exception('Bluetooth not available');
       }
 
+      // Check if Bluetooth is on
       if (await FlutterBluePlus.isOn == false) {
         throw Exception('Bluetooth is turned off');
       }
 
-      Duration scanDuration = timeout ?? Duration(seconds: 4);
+      // Start scanning with timeout
+      Duration scanDuration =
+          timeout ?? Duration(seconds: _config.scanTime.toInt());
+      print('Starting Bluetooth scan for ${scanDuration.inSeconds} seconds...');
 
-      await FlutterBluePlus.startScan(timeout: scanDuration);
+      await FlutterBluePlus.startScan(
+        timeout: scanDuration,
+      );
 
-      List<BluetoothDevice> devices = [];
-      await for (List<ScanResult> results in FlutterBluePlus.scanResults) {
+      // Listen to scan results during the entire scan period
+      StreamSubscription? scanSubscription;
+      Completer<void> scanCompleter = Completer<void>();
+
+      scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (ScanResult result in results) {
-          if (!devices.any((d) => d.remoteId == result.device.remoteId)) {
-            if (showAllDevices) {
-              devices.add(result.device);
-            } else {
-              // Check if it's a supported printer
-              String name = result.device.platformName;
-              String advName = result.advertisementData.advName;
+          String platformName = result.device.platformName;
+          String advertisedName = result.advertisementData.advName;
 
-              if (_isSupportedPrinter(name) || _isSupportedPrinter(advName)) {
-                devices.add(result.device);
+          // Debug: print all discovered devices
+          print(
+              'Found device: platformName="$platformName", advertisedName="$advertisedName", rssi=${result.rssi}');
+
+          // If showAllDevices is true, add all devices (like Python's everything=True)
+          if (showAllDevices) {
+            if (!catPrinters.any((d) => d.remoteId == result.device.remoteId)) {
+              print('Added device: $platformName / $advertisedName');
+              catPrinters.add(result.device);
+            }
+          } else {
+            // Check both platform name and advertised name for supported models
+            bool isSupported = _isSupportedPrinter(platformName) ||
+                _isSupportedPrinter(advertisedName);
+
+            if (isSupported) {
+              if (!catPrinters
+                  .any((d) => d.remoteId == result.device.remoteId)) {
+                print('Added Cat Printer: $platformName / $advertisedName');
+                catPrinters.add(result.device);
               }
             }
           }
         }
+      });
 
-        // Break after a reasonable time
-        if (devices.isNotEmpty && !showAllDevices) break;
-      }
+      // Wait for scan to complete
+      FlutterBluePlus.isScanning.listen((isScanning) {
+        if (!isScanning && !scanCompleter.isCompleted) {
+          scanCompleter.complete();
+        }
+      });
+
+      await scanCompleter.future;
+      await scanSubscription?.cancel();
+
+      print('Scan completed. Found ${catPrinters.length} Cat Printer(s)');
 
       await FlutterBluePlus.stopScan();
-      return devices;
     } catch (e) {
       await FlutterBluePlus.stopScan();
       rethrow;
     }
+
+    return catPrinters;
   }
 
   /// Check if device name indicates a supported printer
@@ -322,34 +404,86 @@ class CatPrinterService {
     if (name.isEmpty) return false;
 
     final upperName = name.toUpperCase();
+
+    // Specific model patterns
+    final supportedPatterns = [
+      'GB01',
+      'GB02',
+      'GB03',
+      'GT01',
+      'MX05',
+      'MX06',
+      'MX07',
+      'MX08',
+      'MX09',
+      'MX10',
+      'MX11',
+      'YT01',
+      'MXW01',
+      'CAT',
+      'PRINTER'
+    ];
+
+    for (final pattern in supportedPatterns) {
+      if (upperName.contains(pattern)) {
+        return true;
+      }
+    }
+
+    // General patterns for cat printers
     return upperName.contains('GB') ||
         upperName.contains('MX') ||
         upperName.contains('GT') ||
-        upperName.contains('YT') ||
-        upperName.contains('CAT') ||
-        upperName.contains('PRINTER');
+        upperName.contains('YT');
   }
 
   /// Detect printer model from device name (simple heuristic)
   String _detectModelFromDevice(BluetoothDevice device) {
-    final deviceName = device.name?.toUpperCase() ?? '';
+    // Check both platform name and advertised name
+    final platformName = device.platformName.toUpperCase();
+    final advertisedName = device.name?.toUpperCase() ?? '';
 
-    // MXW01 detection
-    if (deviceName.contains('MXW01')) {
-      return 'MXW01';
+    print(
+        'Detecting model for device: platformName="$platformName", advertisedName="$advertisedName"');
+
+    // Check platform name first
+    String? detectedModel = _getModelFromName(platformName);
+    if (detectedModel != null) {
+      print('Detected model from platform name: $detectedModel');
+      return detectedModel;
     }
 
-    // Other model detection based on device name patterns
-    if (deviceName.contains('GB01')) return 'GB01';
-    if (deviceName.contains('GB02')) return 'GB02';
-    if (deviceName.contains('GB03')) return 'GB03';
-    if (deviceName.contains('GT01')) return 'GT01';
-    if (deviceName.contains('MX05')) return 'MX05';
-    if (deviceName.contains('MX06')) return 'MX06';
-    if (deviceName.contains('YT01')) return 'YT01';
+    // Check advertised name
+    detectedModel = _getModelFromName(advertisedName);
+    if (detectedModel != null) {
+      print('Detected model from advertised name: $detectedModel');
+      return detectedModel;
+    }
 
-    // Default to GB01 for unknown devices
-    return 'GB01';
+    print('Could not detect specific model, defaulting to GB01');
+    return 'GB01'; // Default fallback
+  }
+
+  /// Extract model name from device name string
+  String? _getModelFromName(String name) {
+    if (name.isEmpty) return null;
+
+    // MXW01 detection (highest priority)
+    if (name.contains('MXW01')) return 'MXW01';
+
+    // Specific model patterns
+    final models = ['GB01', 'GB02', 'GB03', 'GT01', 'YT01'];
+    for (final model in models) {
+      if (name.contains(model)) return model;
+    }
+
+    // MX series (MX05-MX11)
+    for (int i = 5; i <= 11; i++) {
+      final model = 'MX${i.toString().padLeft(2, '0')}';
+      if (name.contains(model)) return model;
+    }
+
+    return null;
   }
 
   /// Convert text to image
