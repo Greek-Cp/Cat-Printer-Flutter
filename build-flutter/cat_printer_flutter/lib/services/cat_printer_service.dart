@@ -10,6 +10,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:image/image.dart' as img;
 import '../models/printer_models.dart';
 import 'printer_commander.dart';
+import 'commands/base_commands.dart';
+import 'commands/mxw01_commands.dart';
+import 'commands/generic_commands.dart';
 
 class CatPrinterService {
   BluetoothDevice? _device;
@@ -17,6 +20,7 @@ class CatPrinterService {
   BluetoothCharacteristic? _rxCharacteristic;
   BluetoothCharacteristic? _dataCharacteristic; // For MXW01 model
   PrinterModel? _model;
+  PrinterCommandInterface? _commands; // Command interface for current model
   PrinterConfig _config = PrinterConfig();
 
   bool _isConnected = false;
@@ -135,7 +139,9 @@ class CatPrinterService {
         throw Exception('Unsupported printer model: $deviceName');
       }
 
-      print('Found supported model: ${_model!.name}');
+      // Create command interface for this model
+      _commands = _model!.createCommandInterface();
+      print('Found supported model: ${_model!.name} (${_model!.type})');
 
       // Connect to device
       print('Connecting to device...');
@@ -163,13 +169,14 @@ class CatPrinterService {
           print('Characteristic UUID: $uuid');
 
           // Check for both short and full UUID formats
-          bool isTxChar = uuid == PrinterCommander.txCharacteristic ||
+          bool isTxChar = uuid == _model!.txCharacteristic ||
               uuid == 'ae01' ||
               uuid.contains('ae01');
-          bool isRxChar = uuid == PrinterCommander.rxCharacteristic ||
+          bool isRxChar = uuid == _model!.rxCharacteristic ||
               uuid == 'ae02' ||
               uuid.contains('ae02');
-          bool isDataChar = uuid == PrinterCommander.dataCharacteristic ||
+          bool isDataChar = (_model!.dataCharacteristic != null &&
+                  uuid == _model!.dataCharacteristic!) ||
               uuid == 'ae03' ||
               uuid.contains('ae03');
 
@@ -194,8 +201,8 @@ class CatPrinterService {
       if (_txCharacteristic == null || _rxCharacteristic == null) {
         print('TX Characteristic found: ${_txCharacteristic != null}');
         print('RX Characteristic found: ${_rxCharacteristic != null}');
-        print('Expected TX UUID: ${PrinterCommander.txCharacteristic}');
-        print('Expected RX UUID: ${PrinterCommander.rxCharacteristic}');
+        print('Expected TX UUID: ${_model!.txCharacteristic}');
+        print('Expected RX UUID: ${_model!.rxCharacteristic}');
         throw Exception('Required characteristics not found');
       }
 
@@ -228,6 +235,7 @@ class CatPrinterService {
       _rxCharacteristic = null;
       _dataCharacteristic = null;
       _model = null;
+      _commands = null;
       _isConnected = false;
       _isPaused = false;
       _pendingData.clear();
@@ -236,15 +244,15 @@ class CatPrinterService {
 
   /// Handle notifications from printer - ported from Python code
   void _handleNotification(List<int> data) {
-    if (_listEquals(data, PrinterCommander.dataFlowPause)) {
+    if (_listEquals(data, BaseCommands.dataFlowPause)) {
       _isPaused = true;
-    } else if (_listEquals(data, PrinterCommander.dataFlowResume)) {
+    } else if (_listEquals(data, BaseCommands.dataFlowResume)) {
       _isPaused = false;
     }
   }
 
   /// Check if connected printer is MXW01 model
-  bool get _isMXW01 => _model?.name == 'MXW01';
+  bool get _isMXW01 => _model?.type == PrinterType.mxw01;
 
   /// Send command using appropriate protocol based on printer model
   Future<void> _sendCommandForModel(List<int> command) async {
@@ -310,57 +318,87 @@ class CatPrinterService {
 
   /// Prepare printer for printing - optimized based on Python settings
   Future<void> _prepare({int? energy}) async {
-    await _sendCommand(PrinterCommander.getDeviceStateCommand());
+    if (_commands == null) return;
 
-    if (_model!.isNewKind) {
-      await _sendCommand(PrinterCommander.getStartPrintNewCommand());
-    } else {
-      await _sendCommand(PrinterCommander.getStartPrintCommand());
+    // For MXW01, preparation is different
+    if (_isMXW01) {
+      await _prepareMXW01(energy: energy);
+      return;
     }
 
-    await _sendCommand(PrinterCommander.getSetDpiAs200Command());
+    await _sendCommand(_commands!.getDeviceStateCommand());
+    await _sendCommand(_commands!.getStartPrintCommand());
+    await _sendCommand(_commands!.getSetDpiCommand());
 
     // Use energy from parameter or default from Python implementation
     int energyLevel =
         energy ?? 4096; // Default: 0x1000 (4096) - moderate level like Python
-    await _sendCommand(PrinterCommander.getSetEnergyCommand(energyLevel));
+    await _sendCommand(_commands!.getSetEnergyCommand(energyLevel));
 
     // Quality: 5 - maximum quality like Python
     if (_config.speed > 0) {
-      await _sendCommand(PrinterCommander.getSetSpeedCommand(_config.speed));
+      await _sendCommand(_commands!.getSetSpeedCommand(_config.speed));
     }
 
-    await _sendCommand(PrinterCommander.getApplyEnergyCommand());
-    await _sendCommand(PrinterCommander.getUpdateDeviceCommand());
+    await _sendCommand(_commands!.getApplyEnergyCommand());
+    await _sendCommand(_commands!.getUpdateDeviceCommand());
     await _flush();
 
     // Add delay like Python (100ms between tasks)
     await Future.delayed(Duration(milliseconds: 100));
 
-    await _sendCommand(PrinterCommander.getStartLatticeCommand());
+    await _sendCommand(_commands!.getStartLatticeCommand());
+  }
+
+  /// Prepare MXW01 printer for printing
+  Future<void> _prepareMXW01({int? energy}) async {
+    if (_commands == null) return;
+
+    // Set print intensity for MXW01
+    int intensity = energy != null ? (energy * 100 / 4096).round() : 50;
+    if (intensity > 100) intensity = 100;
+
+    final mxw01Commands = _commands as MXW01PrinterCommands;
+    await _sendCommandForModel(
+        mxw01Commands.getPrintIntensityCommand(intensity));
   }
 
   /// Finish printing - optimized based on Python implementation
   Future<void> _finish() async {
-    await _sendCommand(PrinterCommander.getEndLatticeCommand());
-    await _sendCommand(PrinterCommander.getSetSpeedCommand(8));
+    if (_commands == null) return;
+
+    // For MXW01, finishing is different
+    if (_isMXW01) {
+      await _finishMXW01();
+      return;
+    }
+
+    await _sendCommand(_commands!.getEndLatticeCommand());
+    await _sendCommand(_commands!.getSetSpeedCommand(8));
 
     // Feed paper like Python (0x5, 0x00 = 5 steps)
-    await _sendCommand(PrinterCommander.getFeedPaperCommand(5));
+    await _sendCommand(_commands!.getFeedPaperCommand(5));
 
     if (_model!.problemFeeding) {
       // Send empty bitmap data for problematic models
       List<int> emptyLine = List.filled(_model!.paperWidth ~/ 8, 0);
       for (int i = 0; i < 128; i++) {
-        await _sendCommand(PrinterCommander.getDrawBitmapCommand(emptyLine));
+        await _sendCommand(_commands!.getDrawBitmapCommand(emptyLine));
       }
     }
 
-    await _sendCommand(PrinterCommander.getDeviceStateCommand());
+    await _sendCommand(_commands!.getDeviceStateCommand());
     await _flush();
 
     // Add delay like Python (100ms between tasks)
     await Future.delayed(Duration(milliseconds: 100));
+  }
+
+  /// Finish MXW01 printing
+  Future<void> _finishMXW01() async {
+    // MXW01 specific finishing - flush and complete
+    final mxw01Commands = _commands as MXW01PrinterCommands;
+    await _sendCommandForModel(mxw01Commands.getPrintDataFlushCommand());
   }
 
   /// Print text - improved bitmap-based implementation
@@ -550,7 +588,8 @@ class CatPrinterService {
 
     // Use different printing approach for MXW01
     if (_isMXW01) {
-      await _printImageMXW01(rgbaImage, energy: energy ?? 50, threshold: threshold ?? 128.0);
+      await _printImageMXW01(rgbaImage,
+          energy: energy ?? 50, threshold: threshold ?? 128.0);
       return;
     }
 
@@ -560,9 +599,14 @@ class CatPrinterService {
     // Energy: 0x10, 0x00 = 4096 (moderate level)
     // Quality: 5 (high)
     // Drawing Mode: 1 (image mode)
-    await _sendCommand(PrinterCommander.getSetEnergyCommand(energy ?? 4096));
-    await _sendCommand(PrinterCommander.getSetQualityCommand(5));
-    await _sendCommand(PrinterCommander.getDrawingModeCommand(1));
+    if (_commands != null) {
+      await _sendCommand(_commands!.getSetEnergyCommand(energy ?? 4096));
+      if (_commands! is GenericPrinterCommands) {
+        final genericCommands = _commands as GenericPrinterCommands;
+        await _sendCommand(genericCommands.getSetQualityCommand(5));
+        await _sendCommand(genericCommands.getDrawingModeCommand(1));
+      }
+    }
 
     // Process image line by line seperti blog - pixel by pixel approach
     for (int y = 0; y < rgbaImage.height; y++) {
@@ -614,7 +658,9 @@ class CatPrinterService {
       }
 
       // Send bitmap line
-      await _sendCommand(PrinterCommander.getDrawBitmapCommand(bmp));
+      if (_commands != null) {
+        await _sendCommand(_commands!.getDrawBitmapCommand(bmp));
+      }
       // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
       // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
 
@@ -659,53 +705,48 @@ class CatPrinterService {
 
   /// Get printer status (MXW01 specific)
   Future<void> getPrinterStatus() async {
-    if (!_isConnected) {
+    if (!_isConnected || _commands == null) {
       throw Exception('Printer not connected');
     }
-    
+
     if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01StatusCommand());
-      await _sendCommandForModel(PrinterCommander.getMXW01VersionCommand());
+      final statusCmd = _commands!.getStatusCommand();
+      final versionCmd = _commands!.getVersionCommand();
+      if (statusCmd != null) await _sendCommandForModel(statusCmd);
+      if (versionCmd != null) await _sendCommandForModel(versionCmd);
     } else {
-      await _sendCommand(PrinterCommander.getDeviceStateCommand());
+      await _sendCommand(_commands!.getDeviceStateCommand());
     }
   }
 
   /// Get battery level (MXW01 specific)
   Future<void> getBatteryLevel() async {
-    if (!_isConnected) {
+    if (!_isConnected || _commands == null) {
       throw Exception('Printer not connected');
     }
-    
+
     if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01BatteryCommand());
+      final batteryCmd = _commands!.getBatteryCommand();
+      if (batteryCmd != null) await _sendCommandForModel(batteryCmd);
     }
   }
 
   /// Eject paper (MXW01 specific)
   Future<void> ejectPaper(int lineCount) async {
-    if (!_isConnected) {
+    if (!_isConnected || _commands == null) {
       throw Exception('Printer not connected');
     }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01EjectPaperCommand(lineCount));
-    } else {
-      await _sendCommand(PrinterCommander.getFeedPaperCommand(lineCount));
-    }
+
+    await _sendCommand(_commands!.getFeedPaperCommand(lineCount));
   }
 
   /// Retract paper (MXW01 specific)
   Future<void> retractPaper(int lineCount) async {
-    if (!_isConnected) {
+    if (!_isConnected || _commands == null) {
       throw Exception('Printer not connected');
     }
-    
-    if (_isMXW01) {
-      await _sendCommandForModel(PrinterCommander.getMXW01RetractPaperCommand(lineCount));
-    } else {
-      await _sendCommand(PrinterCommander.getRetractPaperCommand(lineCount));
-    }
+
+    await _sendCommand(_commands!.getRetractPaperCommand(lineCount));
   }
 
   /// Update printer configuration
@@ -719,65 +760,80 @@ class CatPrinterService {
   }
 
   /// Print image using MXW01 specific protocol
-  Future<void> _printImageMXW01(img.Image image, {required int energy, required double threshold}) async {
+  Future<void> _printImageMXW01(img.Image image,
+      {required int energy, required double threshold}) async {
     if (_dataCharacteristic == null) {
       throw Exception('Data characteristic not found for MXW01');
     }
 
     // Set print intensity (0-100)
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintIntensityCommand(energy));
+    if (_commands != null && _commands! is MXW01PrinterCommands) {
+      final mxw01Commands = _commands! as MXW01PrinterCommands;
+      await _sendCommandForModel(
+          mxw01Commands.getPrintIntensityCommand(energy));
+    }
 
     // Convert image to bitmap data
     List<int> bitmapData = [];
-    int bytesPerLine = _model!.paperWidth ~/ 8; // 384 pixels = 48 bytes per line
-    
+    int bytesPerLine =
+        _model!.paperWidth ~/ 8; // 384 pixels = 48 bytes per line
+
     for (int y = 0; y < image.height; y++) {
       for (int x = 0; x < _model!.paperWidth; x += 8) {
         int byte = 0;
-        
+
         for (int bit = 0; bit < 8; bit++) {
           byte >>= 1;
-          
+
           if (x + bit < image.width) {
             img.Pixel pixel = image.getPixel(x + bit, y);
             int r = pixel.r.toInt();
             int g = pixel.g.toInt();
             int b = pixel.b.toInt();
             int a = pixel.a.toInt();
-            
+
             // Apply threshold like C# implementation
-            if (r < threshold && g < threshold && b < threshold && a > threshold) {
+            if (r < threshold &&
+                g < threshold &&
+                b < threshold &&
+                a > threshold) {
               byte |= 0x80;
             }
           }
         }
-        
+
         bitmapData.add(byte);
       }
     }
 
     int lineCount = image.height;
-    
+
     // Send print command with line count and print mode (0x0 = Monochrome)
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintCommand(lineCount, 0x0));
-    
+    if (_commands != null && _commands! is MXW01PrinterCommands) {
+      final mxw01Commands = _commands! as MXW01PrinterCommands;
+      await _sendCommandForModel(mxw01Commands.getPrintCommand(lineCount, 0x0));
+    }
+
     // Send bitmap data line by line using data characteristic
     for (int line = 0; line < lineCount; line++) {
       int startIndex = line * bytesPerLine;
       int endIndex = startIndex + bytesPerLine;
-      
+
       if (endIndex <= bitmapData.length) {
         List<int> lineData = bitmapData.sublist(startIndex, endIndex);
         await _dataCharacteristic!.write(lineData, withoutResponse: true);
-        
+
         // Small delay to prevent overwhelming the printer
         await Future.delayed(Duration(milliseconds: 10));
       }
     }
-    
+
     // Flush print data
-    await _sendCommandForModel(PrinterCommander.getMXW01PrintDataFlushCommand());
-    
+    if (_commands != null && _commands! is MXW01PrinterCommands) {
+      final mxw01Commands = _commands! as MXW01PrinterCommands;
+      await _sendCommandForModel(mxw01Commands.getPrintDataFlushCommand());
+    }
+
     // Wait for print completion (simplified - in C# this waits for notification)
     await Future.delayed(Duration(seconds: 2));
   }
@@ -841,14 +897,15 @@ class CatPrinterService {
   }) async {
     try {
       // Calculate size based on printer paper width if not provided
-      Size targetSize = customSize ?? Size(
-        _model!.paperWidth.toDouble(),
-        _model!.paperWidth.toDouble(), // Square by default
-      );
+      Size targetSize = customSize ??
+          Size(
+            _model!.paperWidth.toDouble(),
+            _model!.paperWidth.toDouble(), // Square by default
+          );
 
       // Create a repaint boundary to capture the widget
       final RenderRepaintBoundary repaintBoundary = RenderRepaintBoundary();
-      
+
       // Create a pipeline owner and build owner
       final PipelineOwner pipelineOwner = PipelineOwner();
       final BuildOwner buildOwner = BuildOwner(focusManager: FocusManager());
@@ -885,11 +942,11 @@ class CatPrinterService {
           ),
         ),
       ).attachToRenderTree(buildOwner);
-      
+
       // Build and layout with proper sequence
       buildOwner.buildScope(rootElement);
       buildOwner.finalizeTree();
-      
+
       // Flush the pipeline in correct order
       pipelineOwner.flushLayout();
       pipelineOwner.flushCompositingBits();
