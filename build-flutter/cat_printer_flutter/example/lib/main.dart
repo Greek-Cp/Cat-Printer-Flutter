@@ -7,6 +7,8 @@ import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+import 'package:cat_printer_flutter/utils/helper_screenshot.dart';
+import 'package:cat_printer_flutter/utils/printer_controller.dart';
 
 void main() {
   runApp(const CatPrinterApp());
@@ -37,6 +39,9 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
   final TextEditingController _textController =
       TextEditingController(text: 'Hello Cat Printer!');
 
+  // Add printer controller
+  late final PrinterController _printerController;
+
   List<BluetoothDevice> _devices = [];
   BluetoothDevice? _connectedDevice;
   String _status = 'Ready';
@@ -56,12 +61,18 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
   void initState() {
     super.initState();
     _requestPermissions();
+    _printerController = PrinterController(
+      printer: _printer,
+      threshold: _threshold,
+      energy: _energy,
+    );
   }
 
   @override
   void dispose() {
     _printer.dispose();
     _textController.dispose();
+    _printerController.dispose();
     super.dispose();
   }
 
@@ -332,6 +343,22 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
     }
   }
 
+  // Update threshold and energy setters
+  void _updateThreshold(double value) {
+    setState(() {
+      _threshold = value;
+      _printerController.threshold = value;
+    });
+    _updatePreview();
+  }
+
+  void _updateEnergy(double value) {
+    setState(() {
+      _energy = value.round();
+      _printerController.energy = value.round();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -428,10 +455,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                         value: _threshold,
                         min: 50,
                         max: 255,
-                        onChanged: (value) {
-                          setState(() => _threshold = value);
-                          _updatePreview(); // Update preview when threshold changes
-                        },
+                        onChanged: _updateThreshold,
                       ),
                     ),
                     Text('${_threshold.round()}'),
@@ -445,8 +469,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                         value: _energy.toDouble(),
                         min: 1000,
                         max: 10000,
-                        onChanged: (value) =>
-                            setState(() => _energy = value.round()),
+                        onChanged: _updateEnergy,
                       ),
                     ),
                     Text('$_energy'),
@@ -517,6 +540,108 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                 ElevatedButton(
                   onPressed: _printWidget,
                   child: Text('Print Simple Widget'),
+                ),
+                SizedBox(height: 16),
+
+                // Screenshot Example Section
+                Text('Screenshot Example:',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                SizedBox(height: 8),
+                ScreenshotWidget(
+                  controller: _printerController,
+                  child: Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black, width: 4),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Hello, this widget will be screenshot!',
+                      style: TextStyle(fontSize: 18),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        setState(() {
+                          _status = 'Capturing screenshot...';
+                        });
+
+                        try {
+                          final image = await _printerController.capture();
+                          if (image != null) {
+                            setState(() {
+                              _selectedImage = image;
+                              _status = 'Screenshot captured successfully';
+                            });
+                            _updatePreview();
+                          } else {
+                            setState(() {
+                              _status = 'Failed to capture screenshot';
+                            });
+                          }
+                        } catch (e) {
+                          setState(() {
+                            _status = 'Error: $e';
+                          });
+                        }
+                      },
+                      icon: Icon(Icons.screenshot),
+                      label: Text('Capture'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        setState(() {
+                          _status = 'Printing...';
+                        });
+
+                        try {
+                          await _printerController.printWidget();
+                          setState(() {
+                            _status = 'Print successful';
+                          });
+                        } catch (e) {
+                          setState(() {
+                            _status = 'Print error: $e';
+                          });
+                        }
+                      },
+                      icon: Icon(Icons.print),
+                      label: Text('Print'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        setState(() {
+                          _status = 'Saving...';
+                        });
+
+                        try {
+                          final path =
+                              await _printerController.saveScreenshot();
+                          if (path != null) {
+                            setState(() {
+                              _status = 'Saved to: $path';
+                            });
+                          } else {
+                            setState(() {
+                              _status = 'Failed to save screenshot';
+                            });
+                          }
+                        } catch (e) {
+                          setState(() {
+                            _status = 'Save error: $e';
+                          });
+                        }
+                      },
+                      icon: Icon(Icons.save),
+                      label: Text('Save'),
+                    ),
+                  ],
                 ),
               ],
             ],

@@ -10,13 +10,13 @@
 ///
 /// final printerService = CatPrinterService();
 /// await printerService.connect(device);
-/// 
+///
 /// // Print text
 /// await printerService.printText('Hello Cat Printer!');
-/// 
+///
 /// // Print image
 /// await printerService.printImage(image);
-/// 
+///
 /// // Print widget directly
 /// await printerService.printWidget(
 ///   Container(
