@@ -323,24 +323,41 @@ class LuckyPrinterCommands implements PrinterCommandInterface {
   }
 
   /// Format bitmap data with proper header - Based on PrinterImageProcessor.getBitmapByteArray()
-  List<int> formatBitmapWithHeader(List<int> bitmapData, int paperWidth) {
+  List<int> formatBitmapWithHeader(List<int> bitmapData, int paperWidth,
+      {bool useCompression = false}) {
     // Calculate dimensions
     int bytesPerLine = (paperWidth + 7) ~/ 8; // Round up division
     int height = bitmapData.length ~/ bytesPerLine;
 
-    // Create header from PrinterImageProcessor: [29, 118, 48, mode, w_low, w_high, h_low, h_high]
-    List<int> header = [
-      0x1D, 0x76, 0x30, 0x00, // GS v 0 mode (0 = normal bitmap mode)
-      bytesPerLine & 0xFF, (bytesPerLine >> 8) & 0xFF, // width in bytes
-      height & 0xFF, (height >> 8) & 0xFF // height in pixels
-    ];
+    if (useCompression) {
+      // Use compression header from getBitmapByteArrayCompress
+      List<int> header = [
+        0x1F, 0x10, // Compression command
+        (bytesPerLine >> 8) & 0xFF, bytesPerLine & 0xFF, // width in bytes
+        (height >> 8) & 0xFF, height & 0xFF, // height in pixels
+        0x00, 0x00, 0x00, 0x00 // Placeholder for compressed size (4 bytes)
+      ];
 
-    // Combine header + bitmap data
-    List<int> result = [];
-    result.addAll(header);
-    result.addAll(bitmapData);
+      // For now, return uncompressed but with optimized header
+      List<int> result = [];
+      result.addAll(header);
+      result.addAll(bitmapData);
+      return result;
+    } else {
+      // Normal bitmap header from PrinterImageProcessor: [29, 118, 48, mode, w_low, w_high, h_low, h_high]
+      List<int> header = [
+        0x1D, 0x76, 0x30, 0x00, // GS v 0 mode (0 = normal bitmap mode)
+        bytesPerLine & 0xFF, (bytesPerLine >> 8) & 0xFF, // width in bytes
+        height & 0xFF, (height >> 8) & 0xFF // height in pixels
+      ];
 
-    return result;
+      // Combine header + bitmap data
+      List<int> result = [];
+      result.addAll(header);
+      result.addAll(bitmapData);
+
+      return result;
+    }
   }
 
   // Helper methods
