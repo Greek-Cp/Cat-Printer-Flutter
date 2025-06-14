@@ -1,0 +1,21 @@
+name: lucky_printer_flutter
+description: Flutter library for Lucky Printer Bluetooth connectivity with support for all printer models
+version: 1.0.0
+homepage: https://github.com/your-repo/lucky_printer_flutter
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_blue_plus: ^1.35.5
+  permission_handler: ^11.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+ 

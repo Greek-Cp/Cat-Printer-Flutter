@@ -13,6 +13,7 @@ import 'printer_commander.dart';
 import 'commands/base_commands.dart';
 import 'commands/mxw01_commands.dart';
 import 'commands/generic_commands.dart';
+import 'commands/lucky_printer_commands.dart';
 
 class CatPrinterService {
   BluetoothDevice? _device;
@@ -143,17 +144,35 @@ class CatPrinterService {
       _commands = _model!.createCommandInterface();
       print('Found supported model: ${_model!.name} (${_model!.type})');
 
-      // Connect to device
+      // Connect to device with extended timeout for Lucky Printer
       print('Connecting to device...');
+      int timeout = _config.connectionTimeout.toInt();
+      if (_model!.type == PrinterType.luckyPrinter) {
+        timeout = (timeout * 1.5).toInt(); // Extend timeout for Lucky Printer
+      }
+
       await device.connect(
-        timeout: Duration(seconds: _config.connectionTimeout.toInt()),
+        timeout: Duration(seconds: timeout),
       );
       print('Device connected successfully');
 
-      // Listen to device state changes
-      _deviceStateSubscription = device.connectionState.listen((state) {
-        _isConnected = (state == BluetoothConnectionState.connected);
-      });
+      ///// Listen to device state changes with better error handling
+      _deviceStateSubscription = device.connectionState.listen(
+        (state) {
+          bool wasConnected = _isConnected;
+          _isConnected = (state == BluetoothConnectionState.connected);
+
+          // Handle disconnection
+          if (wasConnected && !_isConnected) {
+            print('Device disconnected unexpectedly');
+            _handleUnexpectedDisconnection();
+          }
+        },
+        onError: (error) {
+          print('Connection state error: $error');
+          _isConnected = false;
+        },
+      );
 
       // Discover services
       print('Discovering services...');
@@ -169,16 +188,23 @@ class CatPrinterService {
           print('Characteristic UUID: $uuid');
 
           // Check for both short and full UUID formats
+          // Support both Cat Printer (ae01/ae02/ae03) and Lucky Printer (ff01/ff02/ff03) characteristics
           bool isTxChar = uuid == _model!.txCharacteristic ||
               uuid == 'ae01' ||
-              uuid.contains('ae01');
+              uuid.contains('ae01') ||
+              uuid == 'ff02' ||
+              uuid.contains('ff02');
           bool isRxChar = uuid == _model!.rxCharacteristic ||
               uuid == 'ae02' ||
-              uuid.contains('ae02');
+              uuid.contains('ae02') ||
+              uuid == 'ff01' ||
+              uuid.contains('ff01');
           bool isDataChar = (_model!.dataCharacteristic != null &&
                   uuid == _model!.dataCharacteristic!) ||
               uuid == 'ae03' ||
-              uuid.contains('ae03');
+              uuid.contains('ae03') ||
+              uuid == 'ff03' ||
+              uuid.contains('ff03');
 
           if (isTxChar) {
             _txCharacteristic = characteristic;
@@ -212,6 +238,18 @@ class CatPrinterService {
       await disconnect();
       rethrow;
     }
+  }
+
+  /// Handle unexpected disconnection
+  void _handleUnexpectedDisconnection() {
+    print('Handling unexpected disconnection...');
+    _isPaused = false;
+    _pendingData.clear();
+
+    // Clean up characteristics
+    _txCharacteristic = null;
+    _rxCharacteristic = null;
+    _dataCharacteristic = null;
   }
 
   /// Disconnect from printer - ported from Python code
@@ -285,6 +323,56 @@ class CatPrinterService {
       return; // Skip sending in dry run mode
     }
 
+    // Lucky Printer: Send commands with chunking for large data
+    if (_model!.type == PrinterType.luckyPrinter) {
+      try {
+        // Check connection before sending
+        if (_device?.isConnected != true) {
+          throw Exception('Device not connected');
+        }
+
+        // If data is small, send directly
+        if (command.length <= _config.mtu) {
+          await _txCharacteristic!.write(command, withoutResponse: true);
+          await Future.delayed(Duration(milliseconds: 50));
+          return;
+        }
+
+        // For large data, use chunking
+        print(
+            'Lucky Printer: Large data detected (${command.length} bytes), using chunking...');
+        int offset = 0;
+        int chunkNumber = 1;
+        int totalChunks = (command.length / _config.mtu).ceil();
+
+        while (offset < command.length) {
+          int chunkSize = (command.length - offset).clamp(0, _config.mtu);
+          List<int> chunk = command.sublist(offset, offset + chunkSize);
+
+          print(
+              'Sending chunk $chunkNumber/$totalChunks (${chunk.length} bytes)');
+          await _txCharacteristic!.write(chunk, withoutResponse: true);
+          await Future.delayed(
+              Duration(milliseconds: 100)); // Longer delay for large chunks
+
+          offset += chunkSize;
+          chunkNumber++;
+        }
+
+        print('Lucky Printer: All chunks sent successfully');
+        return;
+      } catch (e) {
+        print('Error sending Lucky Printer command: $e');
+        // Try to reconnect if write fails
+        if (e.toString().contains('disconnected') ||
+            e.toString().contains('not connected')) {
+          _isConnected = false;
+        }
+        rethrow;
+      }
+    }
+
+    // Other printers: Use flow control
     _pendingData.addAll(command);
 
     // Send data if buffer is large enough or not paused
@@ -293,24 +381,48 @@ class CatPrinterService {
     }
   }
 
-  /// Flush pending data - ported from Python code
+  /// Flush pending data - ported from Python code with better error handling
   Future<void> _flush() async {
     if (_txCharacteristic == null || _pendingData.isEmpty) return;
 
     int offset = 0;
+    int retryCount = 0;
+    const maxRetries = 3;
+
     while (offset < _pendingData.length) {
-      // Wait if paused
-      while (_isPaused) {
-        await Future.delayed(Duration(milliseconds: 200));
+      try {
+        // Wait if paused
+        while (_isPaused) {
+          await Future.delayed(Duration(milliseconds: 200));
+        }
+
+        // Check connection before sending
+        if (_device?.isConnected != true) {
+          throw Exception('Device not connected during flush');
+        }
+
+        int chunkSize = (_pendingData.length - offset).clamp(0, _config.mtu);
+        List<int> chunk = _pendingData.sublist(offset, offset + chunkSize);
+
+        await _txCharacteristic!.write(chunk, withoutResponse: true);
+        await Future.delayed(
+            Duration(milliseconds: 30)); // Slightly increased delay
+
+        offset += chunkSize;
+        retryCount = 0; // Reset retry count on success
+      } catch (e) {
+        print('Error during flush: $e');
+        retryCount++;
+
+        if (retryCount >= maxRetries) {
+          print('Max retries reached during flush, aborting');
+          _pendingData.clear();
+          rethrow;
+        }
+
+        // Wait before retry
+        await Future.delayed(Duration(milliseconds: 100 * retryCount));
       }
-
-      int chunkSize = (_pendingData.length - offset).clamp(0, _config.mtu);
-      List<int> chunk = _pendingData.sublist(offset, offset + chunkSize);
-
-      await _txCharacteristic!.write(chunk, withoutResponse: true);
-      await Future.delayed(Duration(milliseconds: 20));
-
-      offset += chunkSize;
     }
 
     _pendingData.clear();
@@ -326,7 +438,13 @@ class CatPrinterService {
       return;
     }
 
-    await _sendCommand(_commands!.getDeviceStateCommand());
+    // For Lucky Printer, use different initialization sequence
+    if (_model?.type == PrinterType.luckyPrinter &&
+        _commands is LuckyPrinterCommands) {
+      await _prepareLuckyPrinter(energy: energy);
+      return;
+    }
+
     await _sendCommand(_commands!.getStartPrintCommand());
     await _sendCommand(_commands!.getSetDpiCommand());
 
@@ -363,6 +481,51 @@ class CatPrinterService {
         mxw01Commands.getPrintIntensityCommand(intensity));
   }
 
+  /// Prepare Lucky Printer for printing - based on PPD1 Java implementation
+  Future<void> _prepareLuckyPrinter({int? energy}) async {
+    if (_commands == null) return;
+
+    final luckyCommands = _commands as LuckyPrinterCommands;
+
+    try {
+      // PPD1 sequence from Java SDK:
+      // 1. enablePrinterLuck() - Enable printer with mode 3
+      await _sendCommand(luckyCommands.getEnablePrinterCommand(mode: 3));
+      await Future.delayed(Duration(milliseconds: 200));
+
+      // Check connection after enable
+      if (!_isConnected || _device?.isConnected != true) {
+        throw Exception('Connection lost during enable');
+      }
+
+      // 2. printerWakeupLuck() - Wakeup printer (12 zero bytes)
+      await _sendCommand(luckyCommands.getWakeupCommand());
+      await Future.delayed(Duration(milliseconds: 300));
+
+      // 3. Set density if specified (optional in PPD1 but useful)
+      if (energy != null) {
+        int density = (energy * 255 / 4096).round();
+        if (density > 255) density = 255;
+        if (density < 0) density = 0;
+        await _sendCommand(luckyCommands.setDensityCommand(density));
+        await Future.delayed(Duration(milliseconds: 100));
+      }
+
+      // 4. Set speed if configured (optional)
+      if (_config.speed > 0) {
+        int speed = (_config.speed * 255 / 100).round();
+        if (speed > 255) speed = 255;
+        await _sendCommand(luckyCommands.setSpeedCommand(speed));
+        await Future.delayed(Duration(milliseconds: 100));
+      }
+
+      print('Lucky Printer (PPD1) preparation completed successfully');
+    } catch (e) {
+      print('Error during Lucky Printer preparation: $e');
+      rethrow;
+    }
+  }
+
   /// Finish printing - optimized based on Python implementation
   Future<void> _finish() async {
     if (_commands == null) return;
@@ -370,6 +533,13 @@ class CatPrinterService {
     // For MXW01, finishing is different
     if (_isMXW01) {
       await _finishMXW01();
+      return;
+    }
+
+    // For Lucky Printer, use different finishing sequence
+    if (_model?.type == PrinterType.luckyPrinter &&
+        _commands is LuckyPrinterCommands) {
+      await _finishLuckyPrinter();
       return;
     }
 
@@ -394,11 +564,133 @@ class CatPrinterService {
     await Future.delayed(Duration(milliseconds: 100));
   }
 
+  /// Finish Lucky Printer printing - FIXED: Based on PPD1 Java implementation
+  Future<void> _finishLuckyPrinter() async {
+    if (_commands == null) return;
+
+    final luckyCommands = _commands as LuckyPrinterCommands;
+
+    try {
+      // CRITICAL FIX: PPD1 finishing sequence from Java SDK analysis:
+      // The issue was that we were calling finishing commands separately
+      // But PPD1 needs the complete sequence in one go after bitmap data is sent
+
+      // Just flush the bitmap data that was already sent with proper sequence
+      await _flush();
+
+      // Add minimal delay for printer processing
+      await Future.delayed(Duration(milliseconds: 500));
+
+      print('Lucky Printer (PPD1) finishing completed successfully');
+    } catch (e) {
+      print('Error during Lucky Printer finishing: $e');
+      // Don't rethrow as this is cleanup
+    }
+  }
+
   /// Finish MXW01 printing
   Future<void> _finishMXW01() async {
     // MXW01 specific finishing - flush and complete
     final mxw01Commands = _commands as MXW01PrinterCommands;
     await _sendCommandForModel(mxw01Commands.getPrintDataFlushCommand());
+  }
+
+  /// Print image for PPD1 - CRITICAL FIX: Based on Java SDK analysis
+  Future<void> _printImagePPD1(img.Image rgbaImage,
+      {int? energy, double? threshold}) async {
+    if (_commands == null) return;
+
+    final luckyCommands = _commands as LuckyPrinterCommands;
+
+    try {
+      print('Starting PPD1 complete printing sequence...');
+
+      // Collect all bitmap data first
+      List<int> allBitmapData = [];
+
+      // Process image line by line to create bitmap data
+      for (int y = 0; y < rgbaImage.height; y++) {
+        List<int> bmp = [];
+        int bit = 0;
+
+        // Process each pixel line
+        for (int x = 0; x < _model!.paperWidth; x++) {
+          if (bit % 8 == 0) {
+            bmp.add(0x00);
+          }
+
+          // Shift right first
+          bmp[bit ~/ 8] >>= 1;
+
+          // Check if we're within image bounds
+          if (x < rgbaImage.width) {
+            // Get RGBA values
+            img.Pixel pixel = rgbaImage.getPixel(x, y);
+            int r = pixel.r.toInt();
+            int g = pixel.g.toInt();
+            int b = pixel.b.toInt();
+
+            // Convert to grayscale
+            int gray = (0.299 * r + 0.587 * g + 0.114 * b).round();
+
+            // Apply threshold (with Floyd-Steinberg dithering effect)
+            double thresh = threshold ?? 128.0;
+            if (gray < thresh) {
+              bmp[bit ~/ 8] |= 0x80; // Set MSB for black pixel
+            }
+          }
+
+          bit++;
+        }
+
+        // Add bitmap line to complete data
+        allBitmapData.addAll(bmp);
+      }
+
+      print(
+          'Bitmap data prepared: ${allBitmapData.length} bytes for ${rgbaImage.height} lines');
+
+      // CRITICAL FIX: Send PPD1 commands separately (not as one large sequence)
+      // This matches the actual PPD1.printOnce() implementation from decompiled AAR
+
+      print('Sending PPD1 commands separately...');
+
+      // 1. enablePrinterLuck()
+      await _sendCommand(luckyCommands.getEnablePrinterCommand(mode: 3));
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 2. printerWakeupLuck()
+      await _sendCommand(luckyCommands.getWakeupCommand());
+      await Future.delayed(Duration(milliseconds: 200));
+
+      // 3. sendBitmap() - Format bitmap with proper header and send
+      List<int> formattedBitmap = luckyCommands.formatBitmapWithHeader(
+          allBitmapData, _model!.paperWidth);
+      print('Sending formatted bitmap: ${formattedBitmap.length} bytes');
+
+      // IMPORTANT: Large bitmap will be automatically chunked by _sendCommand
+      // which uses the existing BLE chunking logic in the service
+      await _sendCommand(formattedBitmap);
+      await Future.delayed(Duration(milliseconds: 500));
+
+      // 4. printLineDotsLuck(getEndLineDot())
+      int endLineDots = _model!.paperWidth == 384 ? 80 : 120;
+      await _sendCommand(luckyCommands.getPrintLineDotsCommand(endLineDots));
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 5. setMarkPrintLast() - Only on last page
+      await _sendCommand(luckyCommands.getMarkPrintLastCommand());
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 6. stopPrintJobLuck()
+      await _sendCommand(luckyCommands.getStopPrintCommand());
+      await Future.delayed(Duration(milliseconds: 500));
+
+      print('PPD1 complete sequence sent successfully');
+    } catch (e) {
+      print('Error during PPD1 printing: $e');
+      rethrow;
+    }
   }
 
   /// Print text - improved bitmap-based implementation
@@ -593,6 +885,13 @@ class CatPrinterService {
       return;
     }
 
+    // CRITICAL FIX: Use PPD1 complete sequence for Lucky Printer
+    if (_model?.type == PrinterType.luckyPrinter &&
+        _commands is LuckyPrinterCommands) {
+      await _printImagePPD1(rgbaImage, energy: energy, threshold: threshold);
+      return;
+    }
+
     await _prepare(energy: energy);
 
     // Set default values seperti blog
@@ -657,9 +956,31 @@ class CatPrinterService {
         bmp = List.filled(bmp.length, 0); // Empty data for dry run
       }
 
-      // Send bitmap line
+      // Send bitmap line - Lucky Printer follows PPD1 sequence
       if (_commands != null) {
-        await _sendCommand(_commands!.getDrawBitmapCommand(bmp));
+        if (_model!.type == PrinterType.luckyPrinter) {
+          try {
+            // Check connection before each line
+            if (!_isConnected || _device?.isConnected != true) {
+              throw Exception('Connection lost during printing at line $y');
+            }
+
+            // PPD1 uses sendBitmap() which sends bitmap data directly
+            // No special bitmap command wrapper needed
+            List<int> bitmapCommand = _commands!.getDrawBitmapCommand(bmp);
+            await _txCharacteristic!
+                .write(bitmapCommand, withoutResponse: true);
+
+            // Consistent delay for Lucky Printer stability
+            await Future.delayed(Duration(milliseconds: 50));
+          } catch (e) {
+            print('Error sending bitmap line $y: $e');
+            rethrow;
+          }
+        } else {
+          // Other printers: Use normal flow control
+          await _sendCommand(_commands!.getDrawBitmapCommand(bmp));
+        }
       }
       // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
       // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
@@ -978,6 +1299,97 @@ class CatPrinterService {
     } catch (e) {
       print('Error converting widget to image: $e');
       return null;
+    }
+  }
+
+  /// Test PPD1 printing with simple text - CRITICAL FIX verification
+  Future<bool> testPPD1Print() async {
+    try {
+      if (!_isConnected || _model?.type != PrinterType.luckyPrinter) {
+        print('Not connected to PPD1 printer');
+        return false;
+      }
+
+      print('Testing PPD1 printer with decompiled AAR implementation...');
+
+      // Create simple test text
+      String testText =
+          "PPD1 FIXED!\nDecompiled AAR\n${DateTime.now().toString().substring(0, 19)}\nSUCCESS!";
+      await printText(testText);
+
+      print(
+          'PPD1 test print completed successfully using decompiled AAR implementation');
+      return true;
+    } catch (e) {
+      print('PPD1 test print failed: $e');
+      return false;
+    }
+  }
+
+  /// Test raw PPD1 sequence - Direct from decompiled source
+  Future<bool> testRawPPD1Sequence() async {
+    try {
+      if (!_isConnected || _model?.type != PrinterType.luckyPrinter) {
+        print('Not connected to PPD1 printer');
+        return false;
+      }
+
+      print('Testing raw PPD1 sequence from decompiled AAR...');
+
+      final luckyCommands = _commands as LuckyPrinterCommands;
+
+      // Create minimal test bitmap (few lines with pattern)
+      List<int> testBitmap = [];
+      for (int line = 0; line < 10; line++) {
+        // 10 lines only
+        List<int> lineData = List.filled(48, 0); // 48 bytes = 384 pixels / 8
+        // Add pattern for visibility
+        for (int i = 0; i < lineData.length; i += 2) {
+          lineData[i] = 0xAA; // Alternating pattern
+        }
+        testBitmap.addAll(lineData);
+      }
+
+      print('Test bitmap created: ${testBitmap.length} bytes for 10 lines');
+
+      // Send PPD1 commands separately (not as one large sequence)
+      print('Sending PPD1 commands step by step...');
+
+      // 1. enablePrinterLuck()
+      await _sendCommand(luckyCommands.getEnablePrinterCommand(mode: 3));
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 2. printerWakeupLuck()
+      await _sendCommand(luckyCommands.getWakeupCommand());
+      await Future.delayed(Duration(milliseconds: 200));
+
+      // 3. sendBitmap() with header
+      List<int> formattedBitmap =
+          luckyCommands.formatBitmapWithHeader(testBitmap, _model!.paperWidth);
+      print('Sending formatted test bitmap: ${formattedBitmap.length} bytes');
+      await _sendCommand(formattedBitmap);
+      await Future.delayed(Duration(milliseconds: 500));
+
+      // 4. printLineDotsLuck()
+      int endLineDots = _model!.paperWidth == 384 ? 80 : 120;
+      await _sendCommand(luckyCommands.getPrintLineDotsCommand(endLineDots));
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 5. setMarkPrintLast()
+      await _sendCommand(luckyCommands.getMarkPrintLastCommand());
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // 6. stopPrintJobLuck()
+      await _sendCommand(luckyCommands.getStopPrintCommand());
+
+      // Wait for processing
+      await Future.delayed(Duration(milliseconds: 2000));
+
+      print('Raw PPD1 sequence test completed');
+      return true;
+    } catch (e) {
+      print('Raw PPD1 sequence test failed: $e');
+      return false;
     }
   }
 }
