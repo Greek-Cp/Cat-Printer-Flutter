@@ -9,6 +9,8 @@ import 'dart:typed_data';
 import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  CatPrinterService().initializeCatPrinter();
   runApp(const CatPrinterApp());
 }
 
@@ -20,6 +22,7 @@ class CatPrinterApp extends StatelessWidget {
     return MaterialApp(
       title: 'Cat Printer Simple',
       theme: ThemeData(primarySwatch: Colors.blue),
+      debugShowCheckedModeBanner: false,
       home: const CatPrinterHomePage(),
     );
   }

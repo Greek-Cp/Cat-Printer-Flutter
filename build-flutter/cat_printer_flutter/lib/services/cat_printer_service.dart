@@ -1,15 +1,24 @@
 // Cat Printer Service - Main service for Cat Printer operations
 // Ported from Python printer.py
 
+// ignore_for_file: avoid_print
+
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+// import 'package:blue_thermal_printer/blue_thermal_printer.dart';
+import 'package:cat_printer_flutter/other/blue_thermal_printer/print_controller.dart';
+import 'package:cat_printer_flutter/other/blue_thermal_printer/print_image_usecase.dart';
+import 'package:cat_printer_flutter/other/blue_thermal_printer/print_job.dart';
+import 'package:cat_printer_flutter/other/blue_thermal_printer/print_repository_impl.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 import '../models/printer_models.dart';
-import 'printer_commander.dart';
 import 'commands/base_commands.dart';
 import 'commands/mxw01_commands.dart';
 import 'commands/generic_commands.dart';
@@ -26,6 +35,7 @@ class CatPrinterService {
 
   bool _isConnected = false;
   bool _isPaused = false;
+  bool _isBluetoothClassic = false;
   List<int> _pendingData = [];
 
   StreamSubscription? _deviceStateSubscription;
@@ -39,6 +49,19 @@ class CatPrinterService {
   PrinterModel? get model => _model;
   PrinterConfig get config => _config;
   BluetoothDevice? get device => _device;
+
+  PrintController? controller;
+
+  void initializeCatPrinter() {
+    Get.put(PrintController(
+      PrintImageUseCase(PrintRepositoryImpl()),
+    ));
+  }
+
+  void getControllerBlueThermalPrinter() {
+    controller = Get.find<PrintController>();
+    print("controller: $controller");
+  }
 
   /// Scan for Cat Printer devices - ported from Python code
   /// If showAllDevices is true, returns all Bluetooth devices found (similar to Python's everything=True)
@@ -122,6 +145,16 @@ class CatPrinterService {
     return catPrinters;
   }
 
+  // Function For Blue Thermal Printer
+  Future<void> refresh() async {
+    if (controller == null) {
+      print("controller null");
+      getControllerBlueThermalPrinter();
+      return;
+    }
+    await controller?.getBondedDevices();
+  }
+
   /// Connect to a Cat Printer device - ported from Python code
   Future<void> connect(BluetoothDevice device) async {
     try {
@@ -138,15 +171,31 @@ class CatPrinterService {
       _model = PrinterModels.getModel(deviceName);
 
       if (_model == null) {
+        // Classic Bluetooth
         print('Unsupported printer model: $deviceName');
-        print('Supported models: ${PrinterModels.getSupportedModels()}');
-        throw Exception('Unsupported printer model: $deviceName');
-      }
+        print('Attempting to connect using blue_thermal_printer fallback...');
 
-      // Create command interface for this model
-      _commands = _model!.createCommandInterface();
-      print('Found supported model: ${_model!.name} (${_model!.type})');
+        // Attempt to connect using blue_thermal_printer if the model is unsupported
+        await refresh();
+        if (controller == null) {
+          print("controller null");
+          getControllerBlueThermalPrinter();
+        }
+        await controller?.getBondedDevices();
+        bool? isConnected = await controller?.connectPrinterByName(deviceName);
+        print("isConnected: $isConnected");
+        bool c = isConnected!;
+        if (c) {
+          _isConnected = true;
+          _isBluetoothClassic = true;
+        }
+        // throw Exception('Unsupported printer model: $deviceName');
+      } else {
+        // Create command interface for this model
+        _commands = _model!.createCommandInterface();
+        print('Found supported model: ${_model!.name} (${_model!.type})');
 
+<<<<<<< Updated upstream
       // Connect to device with extended timeout for Lucky Printer
       print('Connecting to device...');
       int timeout = _config.connectionTimeout.toInt();
@@ -176,20 +225,34 @@ class CatPrinterService {
           _isConnected = false;
         },
       );
+=======
+        // Connect to device
+        print('Connecting to device...');
+        await device.connect(
+          timeout: Duration(seconds: _config.connectionTimeout.toInt()),
+        );
+        print('Device connected successfully');
 
-      // Discover services
-      print('Discovering services...');
-      List<BluetoothService> services = await device.discoverServices();
-      print('Found ${services.length} services');
+        // Listen to device state changes
+        _deviceStateSubscription = device.connectionState.listen((state) {
+          _isConnected = (state == BluetoothConnectionState.connected);
+        });
+>>>>>>> Stashed changes
 
-      // Find TX and RX characteristics
-      for (BluetoothService service in services) {
-        print('Service UUID: ${service.uuid}');
-        for (BluetoothCharacteristic characteristic
-            in service.characteristics) {
-          String uuid = characteristic.uuid.toString().toLowerCase();
-          print('Characteristic UUID: $uuid');
+        // Discover services
+        print('Discovering services...');
+        List<BluetoothService> services = await device.discoverServices();
+        print('Found ${services.length} services');
 
+        // Find TX and RX characteristics
+        for (BluetoothService service in services) {
+          print('Service UUID: ${service.uuid}');
+          for (BluetoothCharacteristic characteristic
+              in service.characteristics) {
+            String uuid = characteristic.uuid.toString().toLowerCase();
+            print('Characteristic UUID: $uuid');
+
+<<<<<<< Updated upstream
           // Check for both short and full UUID formats
           // Support both Cat Printer (ae01/ae02/ae03) and Lucky Printer (ff01/ff02/ff03) characteristics
           bool isTxChar = uuid == _model!.txCharacteristic ||
@@ -208,35 +271,50 @@ class CatPrinterService {
               uuid.contains('ae03') ||
               uuid == 'ff03' ||
               uuid.contains('ff03');
+=======
+            // Check for both short and full UUID formats
+            bool isTxChar = uuid == _model!.txCharacteristic ||
+                uuid == 'ae01' ||
+                uuid.contains('ae01');
+            bool isRxChar = uuid == _model!.rxCharacteristic ||
+                uuid == 'ae02' ||
+                uuid.contains('ae02');
+            bool isDataChar = (_model!.dataCharacteristic != null &&
+                    uuid == _model!.dataCharacteristic!) ||
+                uuid == 'ae03' ||
+                uuid.contains('ae03');
+>>>>>>> Stashed changes
 
-          if (isTxChar) {
-            _txCharacteristic = characteristic;
-            print('Found TX characteristic: $uuid');
-          } else if (isRxChar) {
-            _rxCharacteristic = characteristic;
-            print('Found RX characteristic: $uuid');
+            if (isTxChar) {
+              _txCharacteristic = characteristic;
+              print('Found TX characteristic: $uuid');
+            } else if (isRxChar) {
+              _rxCharacteristic = characteristic;
+              print('Found RX characteristic: $uuid');
 
-            // Subscribe to notifications for flow control
-            await characteristic.setNotifyValue(true);
-            _rxSubscription =
-                characteristic.lastValueStream.listen(_handleNotification);
-          } else if (isDataChar) {
-            _dataCharacteristic = characteristic;
-            print('Found Data characteristic: $uuid (for MXW01)');
+              // Subscribe to notifications for flow control
+              await characteristic.setNotifyValue(true);
+              _rxSubscription =
+                  characteristic.lastValueStream.listen(_handleNotification);
+            } else if (isDataChar) {
+              _dataCharacteristic = characteristic;
+              print('Found Data characteristic: $uuid (for MXW01)');
+            }
           }
         }
-      }
 
-      if (_txCharacteristic == null || _rxCharacteristic == null) {
-        print('TX Characteristic found: ${_txCharacteristic != null}');
-        print('RX Characteristic found: ${_rxCharacteristic != null}');
-        print('Expected TX UUID: ${_model!.txCharacteristic}');
-        print('Expected RX UUID: ${_model!.rxCharacteristic}');
-        throw Exception('Required characteristics not found');
-      }
+        if (_txCharacteristic == null || _rxCharacteristic == null) {
+          print('TX Characteristic found: ${_txCharacteristic != null}');
+          print('RX Characteristic found: ${_rxCharacteristic != null}');
+          print('Expected TX UUID: ${_model!.txCharacteristic}');
+          print('Expected RX UUID: ${_model!.rxCharacteristic}');
+          throw Exception('Required characteristics not found');
+        }
 
-      _isConnected = true;
-      _pendingData.clear();
+        _isConnected = true;
+        _isBluetoothClassic = false;
+        _pendingData.clear();
+      }
     } catch (e) {
       await disconnect();
       rethrow;
@@ -822,6 +900,7 @@ class CatPrinterService {
   Future<void> printImage(img.Image image,
       {double? threshold,
       int? energy,
+<<<<<<< Updated upstream
       String ditherType = 'floyd_steinberg',
       double widthScale = 0.8,
       double heightScale = 0.7}) async {
@@ -845,19 +924,36 @@ class CatPrinterService {
         height: reducedHeight,
         interpolation: img.Interpolation.cubic,
       );
-    } else {
-      // Image is already narrow enough, but still apply scale factors
-      int reducedWidth = (image.width * widthScale).round();
-      int reducedHeight = (image.height * heightScale).round();
-
-      processedImage = img.copyResize(
-        image,
-        width: reducedWidth,
-        height: reducedHeight,
-        interpolation: img.Interpolation.cubic,
-      );
+=======
+      String ditherType = 'threshold',
+      double widthScale = 0.6,
+      double heightScale = 0.5}) async {
+    if (!_isConnected) {
+      throw Exception('Printer not connected');
     }
 
+    if (_isBluetoothClassic) {
+      // Bluetooth Classic
+      // Simpan ke file sementara
+      Directory tempDir = await getTemporaryDirectory();
+      File tempFile = File('${tempDir.path}/temp_image.png');
+      await tempFile.writeAsBytes(img.encodePng(image));
+
+      String imagePath = tempFile.path;
+      await controller?.printImage(PrintJob(imagePath), threshold);
+>>>>>>> Stashed changes
+    } else {
+      // Resize image using configurable scale factors
+      int targetWidth = (_model!.paperWidth * widthScale).round();
+      img.Image processedImage;
+
+      if (image.width > targetWidth) {
+        // Calculate height with configurable reduction factor
+        int proportionalHeight =
+            (image.height * targetWidth / image.width).round();
+        int reducedHeight = (proportionalHeight * heightScale).round();
+
+<<<<<<< Updated upstream
     // QUALITY IMPROVEMENT: Apply dithering for better results
     img.Image rgbaImage;
     if (ditherType == 'floyd_steinberg') {
@@ -869,24 +965,32 @@ class CatPrinterService {
       rgbaImage = processedImage;
       _lastDitheredImage = null; // Reset tracking
     }
+=======
+        processedImage = img.copyResize(
+          image,
+          width: targetWidth,
+          height: reducedHeight,
+          interpolation: img.Interpolation.cubic,
+        );
+      } else {
+        // Image is already narrow enough, but still apply scale factors
+        int reducedWidth = (image.width * widthScale).round();
+        int reducedHeight = (image.height * heightScale).round();
+>>>>>>> Stashed changes
 
-    // Apply flip if configured
-    if (_config.flipH || _config.flipV) {
-      if (_config.flipH) {
-        rgbaImage = img.flipHorizontal(rgbaImage);
+        processedImage = img.copyResize(
+          image,
+          width: reducedWidth,
+          height: reducedHeight,
+          interpolation: img.Interpolation.cubic,
+        );
       }
-      if (_config.flipV) {
-        rgbaImage = img.flipVertical(rgbaImage);
-      }
-    }
 
-    // Use different printing approach for MXW01
-    if (_isMXW01) {
-      await _printImageMXW01(rgbaImage,
-          energy: energy ?? 50, threshold: threshold ?? 128.0);
-      return;
-    }
+      // Konversi ke RGBA untuk processing seperti blog (jangan langsung grayscale)
+      // processedImage sudah dalam format yang tepat setelah copyResize
+      img.Image rgbaImage = processedImage;
 
+<<<<<<< Updated upstream
     // CRITICAL FIX: Use PPD1 complete sequence for Lucky Printer
     if (_model?.type == PrinterType.luckyPrinter &&
         _commands is LuckyPrinterCommands) {
@@ -919,45 +1023,28 @@ class CatPrinterService {
       for (int x = 0; x < _model!.paperWidth; x++) {
         if (bit % 8 == 0) {
           bmp.add(0x00);
+=======
+      // Apply flip if configured
+      if (_config.flipH || _config.flipV) {
+        if (_config.flipH) {
+          rgbaImage = img.flipHorizontal(rgbaImage);
+>>>>>>> Stashed changes
         }
-
-        // Shift right dulu seperti blog
-        bmp[bit ~/ 8] >>= 1;
-
-        // Check if we're within image bounds
-        if (x < rgbaImage.width) {
-          // Get RGBA values seperti blog
-          img.Pixel pixel = rgbaImage.getPixel(x, y);
-          int r = pixel.r.toInt();
-          int g = pixel.g.toInt();
-          int b = pixel.b.toInt();
-          int a = pixel.a.toInt();
-
-          // Apply threshold seperti blog: (r < 0x80 and g < 0x80 and b < 0x80 and a > 0x80)
-          double thresholdValue =
-              threshold ?? 128.0; // Default 0x80 = 128 seperti blog
-          if (r < thresholdValue &&
-              g < thresholdValue &&
-              b < thresholdValue &&
-              a > thresholdValue) {
-            bmp[bit ~/ 8] |= 0x80; // Set MSB seperti blog
-          }
+        if (_config.flipV) {
+          rgbaImage = img.flipVertical(rgbaImage);
         }
-        // Jika di luar bounds image, biarkan sebagai 0 (putih)
-
-        bit++;
       }
 
-      // Check if line is empty (optimization)
-      bool lineEmpty = bmp.every((byte) => byte == 0);
-      if (lineEmpty && !_config.dryRun) {
-        continue; // Skip empty lines
+      // Use different printing approach for MXW01
+      if (_isMXW01) {
+        await _printImageMXW01(rgbaImage,
+            energy: energy ?? 50, threshold: threshold ?? 128.0);
+        return;
       }
 
-      if (_config.dryRun) {
-        bmp = List.filled(bmp.length, 0); // Empty data for dry run
-      }
+      await _prepare(energy: energy);
 
+<<<<<<< Updated upstream
       // Send bitmap line - Lucky Printer follows PPD1 sequence
       if (_commands != null) {
         if (_model!.type == PrinterType.luckyPrinter) {
@@ -982,16 +1069,83 @@ class CatPrinterService {
         } else {
           // Other printers: Use normal flow control
           await _sendCommand(_commands!.getDrawBitmapCommand(bmp));
+=======
+      // Set default values seperti blog
+      // Energy: 0x10, 0x00 = 4096 (moderate level)
+      // Quality: 5 (high)
+      // Drawing Mode: 1 (image mode)
+      if (_commands != null) {
+        await _sendCommand(_commands!.getSetEnergyCommand(energy ?? 4096));
+        if (_commands! is GenericPrinterCommands) {
+          final genericCommands = _commands as GenericPrinterCommands;
+          await _sendCommand(genericCommands.getSetQualityCommand(5));
+          await _sendCommand(genericCommands.getDrawingModeCommand(1));
+>>>>>>> Stashed changes
         }
       }
-      // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
-      // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
 
-      // Add delay seperti blog - 40ms untuk prevent printer jamming
-      // await Future.delayed(Duration(milliseconds: 40));
+      // Process image line by line seperti blog - pixel by pixel approach
+      for (int y = 0; y < rgbaImage.height; y++) {
+        List<int> bmp = [];
+        int bit = 0;
+
+        // Process setiap pixel seperti blog (bukan 8 pixel sekaligus)
+        // Tapi kita perlu memastikan ukuran bitmap sesuai dengan paper width
+        for (int x = 0; x < _model!.paperWidth; x++) {
+          if (bit % 8 == 0) {
+            bmp.add(0x00);
+          }
+
+          // Shift right dulu seperti blog
+          bmp[bit ~/ 8] >>= 1;
+
+          // Check if we're within image bounds
+          if (x < rgbaImage.width) {
+            // Get RGBA values seperti blog
+            img.Pixel pixel = rgbaImage.getPixel(x, y);
+            int r = pixel.r.toInt();
+            int g = pixel.g.toInt();
+            int b = pixel.b.toInt();
+            int a = pixel.a.toInt();
+
+            // Apply threshold seperti blog: (r < 0x80 and g < 0x80 and b < 0x80 and a > 0x80)
+            double thresholdValue =
+                threshold ?? 128.0; // Default 0x80 = 128 seperti blog
+            if (r < thresholdValue &&
+                g < thresholdValue &&
+                b < thresholdValue &&
+                a > thresholdValue) {
+              bmp[bit ~/ 8] |= 0x80; // Set MSB seperti blog
+            }
+          }
+          // Jika di luar bounds image, biarkan sebagai 0 (putih)
+
+          bit++;
+        }
+
+        // Check if line is empty (optimization)
+        bool lineEmpty = bmp.every((byte) => byte == 0);
+        if (lineEmpty && !_config.dryRun) {
+          continue; // Skip empty lines
+        }
+
+        if (_config.dryRun) {
+          bmp = List.filled(bmp.length, 0); // Empty data for dry run
+        }
+
+        // Send bitmap line
+        if (_commands != null) {
+          await _sendCommand(_commands!.getDrawBitmapCommand(bmp));
+        }
+        // Tidak perlu feed paper setiap baris - ini yang menyebabkan jarak
+        // await _sendCommand(PrinterCommander.getFeedPaperCommand(1));
+
+        // Add delay seperti blog - 40ms untuk prevent printer jamming
+        // await Future.delayed(Duration(milliseconds: 40));
+      }
+
+      await _finish();
     }
-
-    await _finish();
   }
 
   /// Convert image to bitmap data using simple threshold (Python approach)
