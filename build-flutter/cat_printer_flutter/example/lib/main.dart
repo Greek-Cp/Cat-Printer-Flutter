@@ -86,7 +86,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
 
     try {
       final devices = await _printer.scanForDevices(
-        timeout: Duration(seconds: 10),
+        timeout: const Duration(seconds: 10),
         showAllDevices: _showAllDevices,
       );
       setState(() {
@@ -292,9 +292,9 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
 
     try {
       Widget simpleWidget = Container(
-        padding: EdgeInsets.all(20),
+        padding: const EdgeInsets.all(20),
         color: Colors.white,
-        child: Column(
+        child: const Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Simple Receipt',
@@ -336,15 +336,15 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Cat Printer Simple'),
+        title: const Text('Cat Printer Simple'),
         actions: [
           if (_printer.isConnected)
             IconButton(
-                icon: Icon(Icons.bluetooth_disabled), onPressed: _disconnect),
+                icon: const Icon(Icons.bluetooth_disabled), onPressed: _disconnect),
         ],
       ),
       body: Padding(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -352,16 +352,16 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
               // Status
               Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
                   child:
-                      Text('Status: $_status', style: TextStyle(fontSize: 16)),
+                      Text('Status: $_status', style: const TextStyle(fontSize: 16)),
                 ),
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Show all devices checkbox
               CheckboxListTile(
-                title: Text('Show all Bluetooth devices'),
+                title: const Text('Show all Bluetooth devices'),
                 subtitle: Text(_showAllDevices
                     ? 'Will show all discoverable devices'
                     : 'Will show only Cat Printers'),
@@ -373,20 +373,20 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                 },
                 controlAffinity: ListTileControlAffinity.leading,
               ),
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
 
               // Scan button
               ElevatedButton.icon(
                 onPressed: _isScanning ? null : _scanDevices,
                 icon: _isScanning
-                    ? SizedBox(
+                    ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : Icon(Icons.search),
+                    : const Icon(Icons.search),
                 label: Text(_isScanning ? 'Scanning...' : 'Scan Devices'),
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Device list
               if (_devices.isNotEmpty) ...[
@@ -395,8 +395,8 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                         ? 'All Bluetooth Devices:'
                         : 'Cat Printers:',
                     style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
+                        const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
                 ..._devices.map((device) => Card(
                       child: ListTile(
                         title: Text(device.platformName.isNotEmpty
@@ -407,22 +407,22 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                             : null,
                         trailing: ElevatedButton(
                           onPressed: () => _connect(device),
-                          child: Text('Connect'),
+                          child: const Text('Connect'),
                         ),
                       ),
                     )),
               ],
 
               if (_printer.isConnected) ...[
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
 
                 // Settings
-                Text('Settings:',
+                const Text('Settings:',
                     style:
                         TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 Row(
                   children: [
-                    Text('Threshold: '),
+                    const Text('Threshold: '),
                     Expanded(
                       child: Slider(
                         value: _threshold,
@@ -439,7 +439,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                 ),
                 Row(
                   children: [
-                    Text('Energy: '),
+                    const Text('Energy: '),
                     Expanded(
                       child: Slider(
                         value: _energy.toDouble(),
@@ -452,32 +452,32 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                     Text('$_energy'),
                   ],
                 ),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
 
                 // Text input
                 TextField(
                   controller: _textController,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Text to print',
                     border: OutlineInputBorder(),
                   ),
                 ),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
 
                 // Image section
                 ElevatedButton.icon(
                   onPressed: _pickImage,
-                  icon: Icon(Icons.image),
-                  label: Text('Pick Image'),
+                  icon: const Icon(Icons.image),
+                  label: const Text('Pick Image'),
                 ),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
 
                 // Image preview
                 if (_selectedImage != null) ...[
-                  Text('Preview:',
+                  const Text('Preview:',
                       style:
                           TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
                     height: 200,
@@ -486,7 +486,7 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: _isProcessingImage
-                        ? Center(child: CircularProgressIndicator())
+                        ? const Center(child: CircularProgressIndicator())
                         : _previewImage != null
                             ? ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
@@ -496,27 +496,27 @@ class _CatPrinterHomePageState extends State<CatPrinterHomePage> {
                                   fit: BoxFit.contain,
                                 ),
                               )
-                            : Center(
+                            : const Center(
                                 child: Text('Adjust threshold to see preview')),
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   ElevatedButton.icon(
                     onPressed: _selectedImage != null ? _printImage : null,
-                    icon: Icon(Icons.print),
-                    label: Text('Print Image'),
+                    icon: const Icon(Icons.print),
+                    label: const Text('Print Image'),
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                 ],
 
                 // Print buttons
                 ElevatedButton(
                   onPressed: _printText,
-                  child: Text('Print Text'),
+                  child: const Text('Print Text'),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 ElevatedButton(
                   onPressed: _printWidget,
-                  child: Text('Print Simple Widget'),
+                  child: const Text('Print Simple Widget'),
                 ),
               ],
             ],
