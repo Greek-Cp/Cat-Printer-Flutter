@@ -195,6 +195,150 @@ await printerService.printImage(
 );
 ```
 
+## Implementasi Sederhana
+
+Contoh aplikasi sederhana untuk testing printer dengan satu halaman:
+
+```dart
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
+void main() {
+  runApp(const MainApp());
+}
+
+class MainApp extends StatelessWidget {
+  const MainApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Cat Printer Test',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const PrinterTestPage(),
+    );
+  }
+}
+
+class PrinterTestPage extends StatefulWidget {
+  const PrinterTestPage({super.key});
+
+  @override
+  State<PrinterTestPage> createState() => _PrinterTestPageState();
+}
+
+class _PrinterTestPageState extends State<PrinterTestPage> {
+  final CatPrinterService _printer = CatPrinterService();
+  List<BluetoothDevice> _devices = [];
+  String _status = 'Ready';
+
+  @override
+  void dispose() {
+    _printer.dispose();
+    super.dispose();
+  }
+
+  // Scan printer
+  Future<void> _scanPrinter() async {
+    setState(() => _status = 'Scanning...');
+    try {
+      _devices = await _printer.scanForDevices();
+      setState(() => _status = 'Found ${_devices.length} printer(s)');
+    } catch (e) {
+      setState(() => _status = 'Error: $e');
+    }
+  }
+
+  // Connect dan print
+  Future<void> _connectAndPrint(BluetoothDevice device) async {
+    setState(() => _status = 'Connecting...');
+    try {
+      await _printer.connect(device);
+      setState(() => _status = 'Connected! Printing...');
+      
+      // Print widget sederhana
+      await _printer.printWidget(
+        Container(
+          padding: const EdgeInsets.all(20),
+          color: Colors.white,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Hello World!',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Testing Printer\n${DateTime.now()}',
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: Colors.black,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+      
+      setState(() => _status = 'Print Success!');
+    } catch (e) {
+      setState(() => _status = 'Error: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Cat Printer Test')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Status
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Status: $_status', style: const TextStyle(fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Scan button
+            ElevatedButton.icon(
+              onPressed: _scanPrinter,
+              icon: const Icon(Icons.search),
+              label: const Text('Scan Printer'),
+            ),
+            const SizedBox(height: 16),
+            
+            // Device list
+            if (_devices.isNotEmpty) ...[
+              const Text('Available Printers:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ..._devices.map((device) => Card(
+                child: ListTile(
+                  title: Text(device.platformName.isNotEmpty ? device.platformName : 'Unknown Device'),
+                  trailing: ElevatedButton(
+                    onPressed: () => _connectAndPrint(device),
+                    child: const Text('Connect & Print'),
+                  ),
+                ),
+              )),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 ### Permissions
 
 Make sure to add the required permissions in your app:
