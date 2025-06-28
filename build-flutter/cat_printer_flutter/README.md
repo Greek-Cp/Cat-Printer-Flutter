@@ -51,38 +51,119 @@ flutter pub get
 
 ## Usage
 
-### Basic Usage
+### Inisialisasi Service
+
+```dart
+import 'package:cat_printer_flutter/cat_printer_flutter.dart';
+final CatPrinterService printerService = CatPrinterService();
+```
+
+### Scan Printer
+
+```dart
+// Scan hanya Cat Printer
+tList<BluetoothDevice> printers = await printerService.scanForDevices();
+
+// Scan semua perangkat Bluetooth (opsional)
+List<BluetoothDevice> allDevices = await printerService.scanForDevices(showAllDevices: true);
+
+// Mendapatkan total printer yang ditemukan
+int total = printers.length;
+```
+
+### Mendapatkan Printer yang Terhubung
+
+```dart
+BluetoothDevice? connected = printerService.device;
+PrinterModel? model = printerService.model;
+bool isConnected = printerService.isConnected;
+```
+
+### Koneksi ke Printer
+
+```dart
+if (printers.isNotEmpty) {
+  await printerService.connect(printers.first);
+}
+```
+
+### Print Teks
+
+```dart
+if (printerService.isConnected) {
+  await printerService.printText('Hello Cat Printer!');
+}
+```
+
+### Print Gambar
+
+```dart
+import 'package:image/image.dart' as img;
+img.Image? image = img.decodeImage(imageBytes);
+if (image != null && printerService.isConnected) {
+  await printerService.printImage(
+    image,
+    threshold: 150.0, // opsional, default 128
+    energy: 6000,     // opsional, default 6000
+    widthScale: 0.8,  // opsional, default 0.8
+    heightScale: 0.7, // opsional, default 0.7
+  );
+}
+```
+
+### Print Widget Langsung
+
+```dart
+if (printerService.isConnected) {
+  await printerService.printWidget(
+    Container(
+      padding: EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Text('Hello from Widget!', style: TextStyle(fontSize: 24)),
+          Icon(Icons.print, size: 48),
+        ],
+      ),
+    ),
+    threshold: 150.0, // opsional
+    energy: 6000,     // opsional
+  );
+}
+```
+
+### Mendapatkan Status Printer
+
+```dart
+if (printerService.isConnected) {
+  await printerService.getPrinterStatus();
+}
+```
+
+---
+
+### Contoh Lengkap
 
 ```dart
 import 'package:cat_printer_flutter/cat_printer_flutter.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-// Create service instance
 final CatPrinterService printerService = CatPrinterService();
 
-// Scan for Cat Printers
-List<BluetoothDevice> devices = await printerService.scanForDevices();
+// Scan printer
+List<BluetoothDevice> printers = await printerService.scanForDevices();
 
-// Connect to a printer
-if (devices.isNotEmpty) {
-  await printerService.connect(devices.first);
+// Koneksi
+if (printers.isNotEmpty) {
+  await printerService.connect(printers.first);
 }
 
-// Print text
+// Print teks
 if (printerService.isConnected) {
   await printerService.printText('Hello Cat Printer!');
 }
-
-// Print image
-import 'package:image/image.dart' as img;
-img.Image? image = img.decodeImage(imageBytes);
-if (image != null) {
-  await printerService.printImage(image);
-}
-
-// Disconnect
-await printerService.disconnect();
 ```
+
+---
 
 ### Advanced Configuration
 
